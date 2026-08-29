@@ -89,14 +89,14 @@ export const Navbar: React.FC<NavbarProps> = ({
               )}
             </button>
 
-            {/* AI / Gemini Key Settings Button */}
+            {/* AI / Firebase Settings Button */}
             <button
               id="navbar-settings-btn"
               onClick={onOpenSettingsModal}
-              title="AI 雙核心與金鑰設定"
+              title="Firebase 雲端同步與 AI 設定"
               className="p-2 rounded-full bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 active:scale-95 transition-all shadow-xs"
             >
-              <Key className="w-4 h-4 text-indigo-600" />
+              <Key className="w-4 h-4 text-orange-600" />
             </button>
 
             {/* Front / Back Stage Segmented Control */}

@@ -18,6 +18,18 @@ import { PhotoLightbox } from './components/PhotoLightbox';
 import { NfcModal } from './components/NfcModal';
 import { BriefingModal } from './components/BriefingModal';
 import { SettingsModal } from './components/SettingsModal';
+import { 
+  isFirebaseConfigured, 
+  initFirebase 
+} from './services/firebase';
+import { 
+  subscribeItemsRealtime, 
+  subscribeTodosRealtime, 
+  saveItemToFirestore, 
+  deleteItemFromFirestore, 
+  saveTodoToFirestore, 
+  uploadPhotoToFirebaseStorage 
+} from './services/firestoreSync';
 
 export const App: React.FC = () => {
   // 1. Core State
@@ -69,7 +81,30 @@ export const App: React.FC = () => {
   const [isBriefingOpen, setIsBriefingOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
-  // Save to localStorage with Quota Protection & Fallback
+  // 1. Real-time Firebase Sync when configured
+  useEffect(() => {
+    if (!isFirebaseConfigured()) return;
+
+    initFirebase();
+    const unsubItems = subscribeItemsRealtime((cloudItems) => {
+      if (cloudItems && cloudItems.length > 0) {
+        setItems(cloudItems);
+      }
+    });
+
+    const unsubTodos = subscribeTodosRealtime((cloudTodos) => {
+      if (cloudTodos && cloudTodos.length > 0) {
+        setTodos(cloudTodos);
+      }
+    });
+
+    return () => {
+      unsubItems?.();
+      unsubTodos?.();
+    };
+  }, [isSettingsOpen]);
+
+  // 2. Save to localStorage with Quota Protection & Fallback
   useEffect(() => {
     try {
       localStorage.setItem('kao_inventory_items_v2', JSON.stringify(items));
@@ -127,7 +162,8 @@ export const App: React.FC = () => {
   }, [items, todos]);
 
   // Item Handlers
-  const handleSaveItem = (newItem: InventoryItem) => {
+  const handleSaveItem = async (newItem: InventoryItem) => {
+    // 1. Instant local state update
     setItems((prev) => {
       const idx = prev.findIndex((i) => i.id === newItem.id);
       if (idx >= 0) {
@@ -142,7 +178,7 @@ export const App: React.FC = () => {
     setCurrentTab('frontstage');
     setSelectedMemberFilter('all');
     setLastSavedItemId(newItem.id);
-    setToastMessage(`✨ 物品「${newItem.name}」已成功登錄至高家物品清單！`);
+    setToastMessage(`✨ 物品「${newItem.name}」已成功登錄！`);
 
     // Clear highlight after 6 seconds
     setTimeout(() => {
@@ -151,30 +187,67 @@ export const App: React.FC = () => {
     setTimeout(() => {
       setToastMessage(null);
     }, 4000);
+
+    // 2. Cloud Async: Upload photo to Firebase Storage and save document to Firestore
+    if (isFirebaseConfigured()) {
+      let finalItem = { ...newItem };
+      if (newItem.closeUpPhotoUrl && newItem.closeUpPhotoUrl.startsWith('data:')) {
+        try {
+          const cloudUrl = await uploadPhotoToFirebaseStorage(newItem.closeUpPhotoUrl, 'close');
+          finalItem.closeUpPhotoUrl = cloudUrl;
+        } catch (e) {
+          console.warn('Cloud close-up photo upload failed:', e);
+        }
+      }
+      if (newItem.widePhotoUrl && newItem.widePhotoUrl.startsWith('data:')) {
+        try {
+          const cloudUrl = await uploadPhotoToFirebaseStorage(newItem.widePhotoUrl, 'wide');
+          finalItem.widePhotoUrl = cloudUrl;
+        } catch (e) {
+          console.warn('Cloud wide photo upload failed:', e);
+        }
+      }
+      await saveItemToFirestore(finalItem);
+    }
   };
 
-  const handleUpdateItem = (updated: InventoryItem) => {
+  const handleUpdateItem = async (updated: InventoryItem) => {
     setItems((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+    if (isFirebaseConfigured()) {
+      await saveItemToFirestore(updated);
+    }
   };
 
-  const handleDeleteItem = (itemId: string) => {
+  const handleDeleteItem = async (itemId: string) => {
     setItems((prev) => prev.filter((i) => i.id !== itemId));
+    if (isFirebaseConfigured()) {
+      await deleteItemFromFirestore(itemId);
+    }
   };
 
   // Todo Handlers
-  const handleSaveTodo = (newTodo: TodoItem) => {
+  const handleSaveTodo = async (newTodo: TodoItem) => {
     setTodos((prev) => [newTodo, ...prev]);
     setCurrentTab('frontstage');
     setToastMessage(`📝 待辦「${newTodo.title}」已建立！`);
     setTimeout(() => {
       setToastMessage(null);
     }, 4000);
+    if (isFirebaseConfigured()) {
+      await saveTodoToFirestore(newTodo);
+    }
   };
 
-  const handleToggleTodo = (todoId: string) => {
+  const handleToggleTodo = async (todoId: string) => {
+    const target = todos.find((t) => t.id === todoId);
+    if (!target) return;
+    const updated = { ...target, isCompleted: !target.isCompleted };
     setTodos((prev) =>
-      prev.map((t) => (t.id === todoId ? { ...t, isCompleted: !t.isCompleted } : t))
+      prev.map((t) => (t.id === todoId ? updated : t))
     );
+    if (isFirebaseConfigured()) {
+      await saveTodoToFirestore(updated);
+    }
   };
 
   const handleOpenSearchModal = (initialTag?: string) => {
@@ -183,8 +256,8 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-[#f2f2f7] text-gray-900 font-sans antialiased selection:bg-blue-500 selection:text-white">
-      {/* iOS App Navigation Header */}
+    <div className="min-h-screen bg-[#f2f2f7] text-gray-900 pb-24 sm:pb-28 antialiased selection:bg-blue-500 selection:text-white font-sans">
+      {/* 1. Header & Quick Switch Bar */}
       <Navbar
         activeMember={activeMember}
         onSelectMember={setActiveMember}
@@ -196,7 +269,7 @@ export const App: React.FC = () => {
         onOpenSettingsModal={() => setIsSettingsOpen(true)}
       />
 
-      {/* Toast Notification Banner */}
+      {/* Floating Save Toast */}
       {toastMessage && (
         <div className="fixed top-18 left-1/2 -translate-x-1/2 z-50 animate-bounce">
           <div className="bg-gray-900/90 backdrop-blur-md text-white text-xs font-bold px-4 py-2.5 rounded-2xl shadow-xl flex items-center space-x-2 border border-white/20">
@@ -286,6 +359,12 @@ export const App: React.FC = () => {
       <SettingsModal
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
+        items={items}
+        todos={todos}
+        onCloudSyncSuccess={() => {
+          setToastMessage('🔥 Firebase 雲端即時同步已啟動！');
+          setTimeout(() => setToastMessage(null), 4000);
+        }}
       />
     </div>
   );
