@@ -1,0 +1,6 @@
+{
+  "name": "高家智能管家",
+  "description": "專為高家打造的 iOS 風格智能管家 App，支援語音、雙照拍照、文字 AI 辨識登錄、高家樓層層級收納、多家人色彩管理、離線與 AI 搜尋、NFC 掃描、Google Sheets/Drive 資料同步與 LINE 官方帳號推播提醒。",
+  "requestFramePermissions": ["camera", "microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
