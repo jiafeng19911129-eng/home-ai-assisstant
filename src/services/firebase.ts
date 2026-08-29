@@ -12,9 +12,19 @@ export interface FirebaseConfig {
   measurementId?: string;
 }
 
+export const DEFAULT_FIREBASE_CONFIG: FirebaseConfig = {
+  apiKey: "AIzaSyAGg5MEyIXfIg_5ilkO_ax7f_W-GPaiTWY",
+  authDomain: "linebotcanlendar.firebaseapp.com",
+  projectId: "linebotcanlendar",
+  storageBucket: "linebotcanlendar.firebasestorage.app",
+  messagingSenderId: "952308891652",
+  appId: "1:952308891652:web:1e0caf5e4b8b9a8a7b7551",
+  measurementId: "G-GCN6PMGN3N"
+};
+
 const STORAGE_KEY_FIREBASE = 'kao_family_firebase_config';
 
-// 1. Retrieve config from LocalStorage or Vite Env
+// 1. Retrieve config from LocalStorage or Vite Env or Default Project
 export function getStoredFirebaseConfig(): FirebaseConfig | null {
   if (typeof window !== 'undefined') {
     const saved = localStorage.getItem(STORAGE_KEY_FIREBASE);
@@ -40,10 +50,11 @@ export function getStoredFirebaseConfig(): FirebaseConfig | null {
       storageBucket: env.VITE_FIREBASE_STORAGE_BUCKET || (env.VITE_FIREBASE_PROJECT_ID + '.firebasestorage.app'),
       messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID || '',
       appId: env.VITE_FIREBASE_APP_ID || '',
+      measurementId: env.VITE_FIREBASE_MEASUREMENT_ID || '',
     };
   }
 
-  return null;
+  return DEFAULT_FIREBASE_CONFIG;
 }
 
 // 2. Save Firebase config to LocalStorage
