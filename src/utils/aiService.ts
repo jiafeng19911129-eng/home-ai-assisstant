@@ -4,7 +4,12 @@ const STORAGE_KEY_GEMINI = 'kao_family_gemini_api_key';
 
 export function getStoredGeminiKey(): string {
   if (typeof window !== 'undefined') {
-    return localStorage.getItem(STORAGE_KEY_GEMINI) || '';
+    const localKey = localStorage.getItem(STORAGE_KEY_GEMINI);
+    if (localKey && localKey.trim()) return localKey.trim();
+  }
+  const envKey = (import.meta as any).env?.VITE_GEMINI_API_KEY;
+  if (envKey && typeof envKey === 'string' && envKey.trim() && !envKey.startsWith('MY_')) {
+    return envKey.trim();
   }
   return '';
 }
