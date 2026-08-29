@@ -364,8 +364,7 @@ export const DataAnalytics: React.FC<DataAnalyticsProps> = ({ items }) => {
                         outerRadius={85}
                         paddingAngle={3}
                         dataKey="value"
-                        activeIndex={activeCategoryIndex}
-                        activeShape={renderActiveShape}
+                        {...({ activeIndex: activeCategoryIndex, activeShape: renderActiveShape } as any)}
                         onMouseEnter={(_, index) => setActiveCategoryIndex(index)}
                         onMouseLeave={() => setActiveCategoryIndex(undefined)}
                       >
@@ -490,8 +489,7 @@ export const DataAnalytics: React.FC<DataAnalyticsProps> = ({ items }) => {
                         outerRadius={85}
                         paddingAngle={3}
                         dataKey="value"
-                        activeIndex={activeMemberIndex}
-                        activeShape={renderActiveShape}
+                        {...({ activeIndex: activeMemberIndex, activeShape: renderActiveShape } as any)}
                         onMouseEnter={(_, index) => setActiveMemberIndex(index)}
                         onMouseLeave={() => setActiveMemberIndex(undefined)}
                       >
