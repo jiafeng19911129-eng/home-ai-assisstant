@@ -69,17 +69,40 @@ export const App: React.FC = () => {
   const [isBriefingOpen, setIsBriefingOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
-  // Save to localStorage
+  // Save to localStorage with Quota Protection & Fallback
   useEffect(() => {
-    localStorage.setItem('kao_inventory_items_v2', JSON.stringify(items));
+    try {
+      localStorage.setItem('kao_inventory_items_v2', JSON.stringify(items));
+    } catch (err) {
+      console.warn('LocalStorage save failed, applying lightweight fallback:', err);
+      try {
+        // Strip heavy base64 strings if quota exceeded so items data is NEVER lost
+        const safeItems = items.map((it) => ({
+          ...it,
+          closeUpPhotoUrl: it.closeUpPhotoUrl && it.closeUpPhotoUrl.length > 500000 ? undefined : it.closeUpPhotoUrl,
+          widePhotoUrl: it.widePhotoUrl && it.widePhotoUrl.length > 500000 ? undefined : it.widePhotoUrl,
+        }));
+        localStorage.setItem('kao_inventory_items_v2', JSON.stringify(safeItems));
+      } catch (fatalErr) {
+        console.error('Fatal storage save error:', fatalErr);
+      }
+    }
   }, [items]);
 
   useEffect(() => {
-    localStorage.setItem('kao_todos_v2', JSON.stringify(todos));
+    try {
+      localStorage.setItem('kao_todos_v2', JSON.stringify(todos));
+    } catch (err) {
+      console.warn('Failed to save todos to localStorage:', err);
+    }
   }, [todos]);
 
   useEffect(() => {
-    localStorage.setItem('kao_active_member', activeMember);
+    try {
+      localStorage.setItem('kao_active_member', activeMember);
+    } catch (err) {
+      console.warn('Failed to save active member:', err);
+    }
   }, [activeMember]);
 
   // Urgent Count Calculation for Navbar

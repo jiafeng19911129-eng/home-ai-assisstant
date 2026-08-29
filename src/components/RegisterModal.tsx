@@ -12,7 +12,8 @@ import {
 } from '../types';
 import { KAO_LOCATION_STRUCTURE } from '../data/initialData';
 import { SpeechRecognizer } from '../utils/speechRecognition';
-import { analyzeSmartInput } from '../utils/aiService';
+import { analyzeSmartInput, localParseTranscript } from '../utils/aiService';
+import { compressImage } from '../utils/imageCompressor';
 import confetti from 'canvas-confetti';
 import { 
   X, 
@@ -194,17 +195,34 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
     }
   };
 
-  // Handle Photo Upload
-  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>, type: 'close' | 'wide') => {
+  const transcriptTextareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Trigger Native Phone Keyboard with Voice Mic
+  const handleTriggerNativeKeyboardVoice = () => {
+    setSmartMode('text');
+    setTimeout(() => {
+      transcriptTextareaRef.current?.focus();
+    }, 150);
+  };
+
+  // Handle Photo Upload with Auto Compression (~40KB)
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>, type: 'close' | 'wide') => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const dataUrl = event.target?.result as string;
-      if (type === 'close') setCloseUpPhoto(dataUrl);
-      else if (type === 'wide') setWidePhoto(dataUrl);
-    };
-    reader.readAsDataURL(file);
+    try {
+      const compressed = await compressImage(file, 800, 800, 0.72);
+      if (type === 'close') setCloseUpPhoto(compressed);
+      else if (type === 'wide') setWidePhoto(compressed);
+    } catch (err) {
+      console.warn('Image compression fallback:', err);
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const dataUrl = event.target?.result as string;
+        if (type === 'close') setCloseUpPhoto(dataUrl);
+        else if (type === 'wide') setWidePhoto(dataUrl);
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   // Trigger AI Analysis
@@ -390,33 +408,64 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
       return;
     }
 
-    const locFullPath = `${itemFloor}${itemRoom}${itemStorageUnit}${itemSubLocation ? ` ${itemSubLocation}` : ''}`;
-    const cleanName = itemName.trim() || (transcript.trim() ? transcript.trim().slice(0, 15) : '高家新物品');
-    const tagsList = [itemFloor, `${itemFloor}${itemRoom}`, itemStorageUnit, itemOwner];
+    let finalName = itemName.trim();
+    let finalQty = itemQuantity;
+    let finalUnit = itemUnit;
+    let finalFloor = itemFloor;
+    let finalRoom = itemRoom;
+    let finalStorage = itemStorageUnit;
+    let finalSub = itemSubLocation;
+    let finalCat = itemCategory;
+    let finalOwner = itemOwner;
+    let finalExpiry = itemCategory === 'food' && itemExpiryDate ? itemExpiryDate : undefined;
+
+    // Fallback: If user didn't click AI Analyze but spoke/typed in transcript, parse on the fly
+    if (!finalName && transcript.trim()) {
+      const parsed = localParseTranscript(transcript, activeMember, existingItems);
+      if (parsed.itemData) {
+        finalName = parsed.itemData.name;
+        finalQty = parsed.itemData.totalQuantity || 1;
+        finalUnit = parsed.itemData.unit || '件';
+        finalFloor = parsed.itemData.location.floor || '1樓';
+        finalRoom = parsed.itemData.location.room || '客廳';
+        finalStorage = parsed.itemData.location.storageUnit || '白色塑膠4層櫃';
+        finalSub = parsed.itemData.location.subLocation || '第1層';
+        finalCat = parsed.itemData.category;
+        finalOwner = parsed.itemData.owner;
+        finalExpiry = parsed.itemData.expiryDate;
+      }
+    }
+
+    if (!finalName) {
+      finalName = '新登錄物品';
+    }
+
+    const locFullPath = `${finalFloor}${finalRoom}${finalStorage}${finalSub ? ` ${finalSub}` : ''}`;
+    const tagsList = [finalFloor, `${finalFloor}${finalRoom}`, finalStorage, finalOwner];
 
     const finalItem: InventoryItem = {
       id: `item-${Date.now()}`,
-      name: cleanName,
-      category: itemCategory,
-      owner: itemOwner,
+      name: finalName,
+      category: finalCat,
+      owner: finalOwner,
       recordedBy: activeMember,
       locations: [
         {
           id: `loc-${Date.now()}`,
-          floor: itemFloor,
-          room: itemRoom,
-          storageUnit: itemStorageUnit,
-          subLocation: itemSubLocation,
-          quantity: itemQuantity,
-          unit: itemUnit,
+          floor: finalFloor,
+          room: finalRoom,
+          storageUnit: finalStorage,
+          subLocation: finalSub,
+          quantity: finalQty,
+          unit: finalUnit,
           fullPath: locFullPath,
         },
       ],
-      totalQuantity: itemQuantity,
-      unit: itemUnit,
+      totalQuantity: finalQty,
+      unit: finalUnit,
       closeUpPhotoUrl: closeUpPhoto || undefined,
       widePhotoUrl: widePhoto || undefined,
-      expiryDate: itemCategory === 'food' && itemExpiryDate ? itemExpiryDate : undefined,
+      expiryDate: finalExpiry,
       isWarrantyValid: false,
       tags: tagsList,
       recordedAt: new Date().toISOString(),
@@ -429,6 +478,7 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
     confetti({ particleCount: 60, spread: 70, origin: { y: 0.6 } });
     onClose();
   };
+
 
   const ownerConfig = FAMILY_MEMBERS_CONFIG[itemOwner] || FAMILY_MEMBERS_CONFIG['瑋'];
   const allMembers: FamilyMember[] = ['瑋', '珍', '朋', '淨', '炘', '豐', '柔'];
@@ -558,14 +608,23 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
                 </div>
 
                 {/* Live Transcript Preview */}
-                <div className="relative">
+                <div className="relative space-y-2">
                   <textarea
+                    ref={transcriptTextareaRef}
                     rows={2}
                     value={transcript}
                     onChange={(e) => setTranscript(e.target.value)}
                     placeholder="口述語音內容將即時顯示於此，亦可在此手動微調..."
                     className="w-full p-2.5 bg-white border border-blue-200 rounded-xl text-xs text-gray-900 placeholder:text-gray-400 focus:outline-hidden focus:ring-2 focus:ring-blue-500"
                   />
+                  <button
+                    type="button"
+                    onClick={handleTriggerNativeKeyboardVoice}
+                    className="w-full py-1.5 px-3 rounded-xl bg-white hover:bg-blue-50 border border-blue-200 text-blue-700 text-xs font-bold flex items-center justify-center space-x-1.5 shadow-2xs transition-all"
+                  >
+                    <Mic className="w-3.5 h-3.5 text-blue-600" />
+                    <span>📱 呼叫手機鍵盤（使用鍵盤右下角 🎙️ 麥克風）</span>
+                  </button>
                 </div>
               </div>
             )}
@@ -662,6 +721,7 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
               <div className="space-y-2">
                 <div className="relative">
                   <textarea
+                    ref={transcriptTextareaRef}
                     id="input-register-transcript"
                     rows={2}
                     value={transcript}
@@ -684,6 +744,7 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
                 </div>
               </div>
             )}
+
 
             {/* Trigger AI Button */}
             <button

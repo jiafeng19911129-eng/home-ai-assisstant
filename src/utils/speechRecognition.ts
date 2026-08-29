@@ -91,14 +91,16 @@ export class SpeechRecognizer {
 
       this.recognition.onerror = (event: any) => {
         console.warn('Speech recognition error event:', event.error);
-        if (event.error === 'not-allowed') {
-          this.onErrorCallback?.('麥克風權限未開啟，請至瀏覽器設定允許使用麥克風。');
+        if (event.error === 'not-allowed' || event.error === 'permission-denied') {
+          this.onErrorCallback?.('麥克風權限未開啟，請在瀏覽器設定允許使用麥克風，或使用手機鍵盤上的「🎙️ 麥克風」輸入。');
+        } else if (event.error === 'service-not-allowed') {
+          this.onErrorCallback?.('已切換為手機原生語音模式！請直接點擊手機鍵盤上的「🎙️ 麥克風」進行口述。');
         } else if (event.error === 'no-speech') {
           // ignore silent pause
         } else if (event.error === 'network') {
-          this.onErrorCallback?.('網路連線異常，請檢查網路後再試。');
+          this.onErrorCallback?.('網路連線不穩，請直接使用手機鍵盤上的「🎙️ 麥克風」輸入。');
         } else {
-          this.onErrorCallback?.(`語音辨識提示: ${event.error}`);
+          this.onErrorCallback?.('已切換為鍵盤語音模式，請使用手機鍵盤上的「🎙️ 麥克風」口述輸入。');
         }
       };
 
