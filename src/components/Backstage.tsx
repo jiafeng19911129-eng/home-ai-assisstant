@@ -339,6 +339,7 @@ export const Backstage: React.FC<BackstageProps> = ({
                 <thead className="bg-gray-50 text-gray-600 font-bold border-b border-gray-200">
                   <tr>
                     <th className="p-2.5">序號</th>
+                    <th className="p-2.5">照片</th>
                     <th className="p-2.5">物品名稱</th>
                     <th className="p-2.5">類別</th>
                     <th className="p-2.5">擁有者</th>
@@ -351,6 +352,19 @@ export const Backstage: React.FC<BackstageProps> = ({
                   {items.map((item, idx) => (
                     <tr key={item.id} className="hover:bg-gray-50/80 transition-colors">
                       <td className="p-2.5 text-gray-400">{idx + 1}</td>
+                      <td className="p-2.5">
+                        {item.closeUpPhotoUrl || item.widePhotoUrl ? (
+                          <img
+                            src={item.closeUpPhotoUrl || item.widePhotoUrl}
+                            alt={item.name}
+                            className="w-10 h-10 object-cover rounded-lg border border-gray-200 shadow-2xs"
+                          />
+                        ) : (
+                          <div className="w-10 h-10 rounded-lg bg-gray-100 border border-dashed border-gray-300 flex items-center justify-center text-gray-400 text-[10px]">
+                            無圖
+                          </div>
+                        )}
+                      </td>
                       <td className="p-2.5 font-bold text-gray-900">{item.name}</td>
                       <td className="p-2.5">
                         <span className="px-2 py-0.5 rounded bg-gray-100 text-[10px] font-semibold">

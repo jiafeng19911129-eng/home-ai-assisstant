@@ -7,6 +7,7 @@ import {
   CATEGORY_LABELS, 
   ItemCategory,
   GeminiAnalysisResult,
+  AnalyzedItemDraft,
   normalizeMemberAlias
 } from '../types';
 import { KAO_LOCATION_STRUCTURE } from '../data/initialData';
@@ -25,19 +26,12 @@ import {
   MapPin, 
   Calendar, 
   FileText, 
-  Layers, 
-  ShieldCheck, 
   RefreshCw,
-  PlusCircle,
-  MoveRight,
-  MinusCircle,
-  HelpCircle,
   Package,
   CheckSquare,
-  ShoppingBag,
-  ExternalLink,
-  Receipt,
-  Link as LinkIcon
+  Trash2,
+  ListPlus,
+  Plus
 } from 'lucide-react';
 
 interface RegisterModalProps {
@@ -57,8 +51,8 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
   onSaveItem,
   onSaveTodo,
 }) => {
-  // Input Modes: 'smart' (AI analysis) | 'manual' (Direct Entry)
-  const [smartMode, setSmartMode] = useState<'photo' | 'voice' | 'text'>('text');
+  // Input Modes: 'text' | 'voice' | 'photo'
+  const [smartMode, setSmartMode] = useState<'photo' | 'voice' | 'text'>('voice');
   
   // Record Type: 'item' (物品庫存) | 'todo' (待辦事項)
   const [recordType, setRecordType] = useState<'item' | 'todo'>('item');
@@ -69,9 +63,11 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
   const [widePhoto, setWidePhoto] = useState<string | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
 
-  // Analysis result
+  // Analysis result & Batch Items List
   const [analysisResult, setAnalysisResult] = useState<GeminiAnalysisResult | null>(null);
+  const [batchItems, setBatchItems] = useState<AnalyzedItemDraft[]>([]);
 
   // Missing Info Dialog state & Speech Recognition
   const [showMissingDialog, setShowMissingDialog] = useState(false);
@@ -82,7 +78,7 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
   const [showConflictDialog, setShowConflictDialog] = useState(false);
   const [conflictChoice, setConflictChoice] = useState<'new_purchase' | 'move_item' | 'consume'>('new_purchase');
 
-  // Active Draft Item State (Always ready to edit and save)
+  // Single Item Draft State
   const [itemName, setItemName] = useState('');
   const [itemCategory, setItemCategory] = useState<ItemCategory>('daily');
   const [itemOwner, setItemOwner] = useState<FamilyMember>(activeMember);
@@ -93,17 +89,8 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
   const [itemQuantity, setItemQuantity] = useState(1);
   const [itemUnit, setItemUnit] = useState('件');
   const [itemExpiryDate, setItemExpiryDate] = useState('');
-  const [itemWarrantyDate, setItemWarrantyDate] = useState('');
-  const [itemIsWarrantyValid, setItemIsWarrantyValid] = useState(false);
-  const [itemManualUrl, setItemManualUrl] = useState('');
-  const [itemEstimatedLifespanWeeks, setItemEstimatedLifespanWeeks] = useState(4);
 
-  // Purchase Source, Link & Proof (購買來源、連結與證明)
-  const [itemPurchaseSource, setItemPurchaseSource] = useState('');
-  const [itemPurchaseUrl, setItemPurchaseUrl] = useState('');
-  const [itemPurchaseProofUrl, setItemPurchaseProofUrl] = useState<string | null>(null);
-
-  // Active Draft Todo State
+  // Todo State
   const [todoTitle, setTodoTitle] = useState('');
   const [todoAssignedTo, setTodoAssignedTo] = useState<FamilyMember>(activeMember);
   const [todoTargetDate, setTodoTargetDate] = useState(() => {
@@ -117,19 +104,6 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
   const speechRecognizerRef = useRef<SpeechRecognizer | null>(null);
   const missingSpeechRecognizerRef = useRef<SpeechRecognizer | null>(null);
 
-  // Common purchase source presets
-  const PURCHASE_SOURCES = [
-    '好市多 Costco',
-    '全聯福利中心',
-    '蝦皮購物',
-    'Momo 購物',
-    '家樂福',
-    '屈臣氏 / 康是美',
-    '大潭實體門市',
-    '海外代購',
-    '親友贈送'
-  ];
-
   // Reset or initialize state when opening modal
   useEffect(() => {
     if (isOpen) {
@@ -139,8 +113,10 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
       setCloseUpPhoto(null);
       setWidePhoto(null);
       setAnalysisResult(null);
+      setBatchItems([]);
       setShowMissingDialog(false);
       setShowConflictDialog(false);
+      setVoiceError(null);
       setItemName('');
       setItemCategory('daily');
       setItemFloor('1樓');
@@ -150,13 +126,6 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
       setItemQuantity(1);
       setItemUnit('件');
       setItemExpiryDate('');
-      setItemWarrantyDate('');
-      setItemIsWarrantyValid(false);
-      setItemManualUrl('');
-      setItemEstimatedLifespanWeeks(4);
-      setItemPurchaseSource('');
-      setItemPurchaseUrl('');
-      setItemPurchaseProofUrl(null);
       setRecordType('item');
     }
   }, [isOpen, activeMember]);
@@ -174,6 +143,7 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
 
   // Toggle main voice recording
   const handleToggleVoice = () => {
+    setVoiceError(null);
     if (isRecording) {
       speechRecognizerRef.current?.stop();
       setIsRecording(false);
@@ -182,7 +152,6 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
       speechRecognizerRef.current?.start(
         (text) => {
           setTranscript(text);
-          // Auto resolve alias for owner if mentioned in speech
           const detectedOwner = normalizeMemberAlias(text, itemOwner);
           if (detectedOwner !== itemOwner) {
             setItemOwner(detectedOwner);
@@ -191,11 +160,13 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
         },
         (err) => {
           console.warn(err);
+          setVoiceError(err);
           setIsRecording(false);
         },
         () => {
           setIsRecording(false);
-        }
+        },
+        transcript
       );
     }
   };
@@ -217,13 +188,14 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
         },
         () => {
           setIsMissingRecording(false);
-        }
+        },
+        missingFieldAnswer
       );
     }
   };
 
   // Handle Photo Upload
-  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>, type: 'close' | 'wide' | 'proof') => {
+  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>, type: 'close' | 'wide') => {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
@@ -231,7 +203,6 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
       const dataUrl = event.target?.result as string;
       if (type === 'close') setCloseUpPhoto(dataUrl);
       else if (type === 'wide') setWidePhoto(dataUrl);
-      else if (type === 'proof') setItemPurchaseProofUrl(dataUrl);
     };
     reader.readAsDataURL(file);
   };
@@ -239,8 +210,13 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
   // Trigger AI Analysis
   const handleAnalyzeInput = async () => {
     if (!transcript.trim() && !closeUpPhoto && !widePhoto) {
-      alert('請先輸入說明文字、語音或上傳照片！');
+      alert('請先輸入說明文字、使用語音或上傳照片！');
       return;
+    }
+
+    if (isRecording) {
+      speechRecognizerRef.current?.stop();
+      setIsRecording(false);
     }
 
     setIsAnalyzing(true);
@@ -260,7 +236,16 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
 
       setAnalysisResult(data);
 
-      // Check Missing Fields
+      // Multi-Item Batch Detected
+      if (data.itemsList && data.itemsList.length > 1) {
+        setBatchItems(data.itemsList);
+        setRecordType('item');
+        return;
+      } else {
+        setBatchItems([]);
+      }
+
+      // Check Missing Fields for single item
       if (data.missingFields && data.missingFields.length > 0) {
         setShowMissingDialog(true);
         setMissingFieldAnswer(data.missingFields[0].defaultValue || '');
@@ -288,8 +273,6 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
         const resolvedOwner = normalizeMemberAlias(data.todoData.assignedTo || '', activeMember);
         setTodoAssignedTo(resolvedOwner);
         setTodoTargetDate(data.todoData.targetDate || todoTargetDate);
-        setTodoLocationTag(data.todoData.locationTag || '');
-        setTodoNote(data.todoData.note || transcript);
       } else if (data.itemData) {
         setRecordType('item');
         const itemD = data.itemData;
@@ -298,16 +281,6 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
         const resolvedOwner = normalizeMemberAlias(itemD.owner || '', activeMember);
         setItemOwner(resolvedOwner);
         
-        if (itemD.purchaseSource) {
-          setItemPurchaseSource(itemD.purchaseSource);
-        }
-        if (itemD.purchaseUrl) {
-          setItemPurchaseUrl(itemD.purchaseUrl);
-        }
-        if (itemD.purchaseProofUrl) {
-          setItemPurchaseProofUrl(itemD.purchaseProofUrl);
-        }
-
         if (itemD.location) {
           setItemFloor(itemD.location.floor || '1樓');
           setItemRoom(itemD.location.room || '客廳');
@@ -318,19 +291,13 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
         }
         
         if (itemD.expiryDate) setItemExpiryDate(itemD.expiryDate);
-        if (itemD.warrantyDate) setItemWarrantyDate(itemD.warrantyDate);
-        setItemIsWarrantyValid(Boolean(itemD.isWarrantyValid));
-        if (itemD.manualUrl) setItemManualUrl(itemD.manualUrl);
-        if (itemD.estimatedLifespanWeeks) setItemEstimatedLifespanWeeks(itemD.estimatedLifespanWeeks);
       }
     } catch (error) {
       console.error('Analysis failed:', error);
-      // Fallback: parse basic info into fields
       setRecordType('item');
       setItemName(transcript.slice(0, 15) || '新登錄物品');
       const resolvedOwner = normalizeMemberAlias(transcript, activeMember);
       setItemOwner(resolvedOwner);
-      alert('AI 分析連線超時，已為您自動載入輸入文字，請確認下方欄位後直接存檔！');
     } finally {
       setIsAnalyzing(false);
     }
@@ -358,7 +325,53 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
     setShowMissingDialog(false);
   };
 
-  // Final Save Item or Todo
+  // Save All Batch Items at once
+  const handleSaveAllBatchItems = () => {
+    if (batchItems.length === 0) return;
+    
+    batchItems.forEach((draft, idx) => {
+      const locFullPath = `${draft.location.floor}${draft.location.room}${draft.location.storageUnit}${draft.location.subLocation ? ` ${draft.location.subLocation}` : ''}`;
+      const finalItem: InventoryItem = {
+        id: `item-${Date.now()}-${idx}`,
+        name: draft.name.trim() || '高家新物品',
+        category: draft.category || 'daily',
+        owner: draft.owner || activeMember,
+        recordedBy: activeMember,
+        locations: [
+          {
+            id: `loc-${Date.now()}-${idx}`,
+            floor: draft.location.floor || '1樓',
+            room: draft.location.room || '客廳',
+            storageUnit: draft.location.storageUnit || '白色塑膠4層櫃',
+            subLocation: draft.location.subLocation || '第1層',
+            quantity: draft.location.quantity || draft.totalQuantity || 1,
+            unit: draft.location.unit || draft.unit || '件',
+            fullPath: locFullPath,
+          },
+        ],
+        totalQuantity: draft.totalQuantity || 1,
+        unit: draft.unit || '件',
+        closeUpPhotoUrl: closeUpPhoto || undefined,
+        widePhotoUrl: widePhoto || undefined,
+        expiryDate: draft.category === 'food' ? draft.expiryDate : undefined,
+        warrantyDate: draft.category === 'appliance' ? draft.warrantyDate : undefined,
+        isWarrantyValid: Boolean(draft.isWarrantyValid),
+        manualUrl: draft.manualUrl || undefined,
+        estimatedLifespanWeeks: draft.estimatedLifespanWeeks || 4,
+        tags: [draft.location.floor, `${draft.location.floor}${draft.location.room}`, draft.location.storageUnit, draft.owner].filter(Boolean),
+        recordedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        rawInputTranscript: transcript,
+        aiAnalysisSummary: draft.summary,
+      };
+      onSaveItem(finalItem);
+    });
+
+    confetti({ particleCount: 80, spread: 80, origin: { y: 0.6 } });
+    onClose();
+  };
+
+  // Final Save Single Item or Todo
   const handleFinalSave = () => {
     if (recordType === 'todo') {
       const finalTodo: TodoItem = {
@@ -367,8 +380,6 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
         assignedTo: todoAssignedTo,
         recordedBy: activeMember,
         targetDate: todoTargetDate,
-        locationTag: todoLocationTag.trim() || undefined,
-        note: todoNote.trim() || transcript.trim() || undefined,
         isCompleted: false,
         priority: 'high',
         createdAt: new Date().toISOString(),
@@ -379,47 +390,9 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
       return;
     }
 
-    // Saving Inventory Item
     const locFullPath = `${itemFloor}${itemRoom}${itemStorageUnit}${itemSubLocation ? ` ${itemSubLocation}` : ''}`;
     const cleanName = itemName.trim() || (transcript.trim() ? transcript.trim().slice(0, 15) : '高家新物品');
-
-    // Handle existing conflict
-    if (analysisResult?.existingItemMatch) {
-      const existing = existingItems.find((i) => i.id === analysisResult.existingItemMatch?.id);
-      if (existing) {
-        if (conflictChoice === 'move_item') {
-          existing.locations = [
-            {
-              id: `loc-${Date.now()}`,
-              floor: itemFloor,
-              room: itemRoom,
-              storageUnit: itemStorageUnit,
-              subLocation: itemSubLocation,
-              quantity: itemQuantity,
-              unit: itemUnit,
-              fullPath: locFullPath,
-            },
-          ];
-          existing.updatedAt = new Date().toISOString();
-          onSaveItem(existing);
-          confetti({ particleCount: 60, spread: 70, origin: { y: 0.6 } });
-          onClose();
-          return;
-        } else if (conflictChoice === 'consume') {
-          existing.totalQuantity = Math.max(0, existing.totalQuantity - itemQuantity);
-          existing.updatedAt = new Date().toISOString();
-          onSaveItem(existing);
-          confetti({ particleCount: 40, spread: 50, origin: { y: 0.6 } });
-          onClose();
-          return;
-        }
-      }
-    }
-
     const tagsList = [itemFloor, `${itemFloor}${itemRoom}`, itemStorageUnit, itemOwner];
-    if (itemPurchaseSource) {
-      tagsList.push(itemPurchaseSource.split(' ')[0]);
-    }
 
     const finalItem: InventoryItem = {
       id: `item-${Date.now()}`,
@@ -441,45 +414,37 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
       ],
       totalQuantity: itemQuantity,
       unit: itemUnit,
-      purchaseSource: itemPurchaseSource.trim() || undefined,
-      purchaseUrl: itemPurchaseUrl.trim() || undefined,
-      purchaseProofUrl: itemPurchaseProofUrl || undefined,
       closeUpPhotoUrl: closeUpPhoto || undefined,
       widePhotoUrl: widePhoto || undefined,
       expiryDate: itemCategory === 'food' && itemExpiryDate ? itemExpiryDate : undefined,
-      warrantyDate: itemCategory === 'appliance' && itemWarrantyDate ? itemWarrantyDate : undefined,
-      isWarrantyValid: itemCategory === 'appliance' ? itemIsWarrantyValid : false,
-      manualUrl: itemManualUrl.trim() || undefined,
-      estimatedLifespanWeeks: (itemCategory === 'medical' || itemCategory === 'daily') ? itemEstimatedLifespanWeeks : undefined,
+      isWarrantyValid: false,
       tags: tagsList,
       recordedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      rawInputTranscript: transcript || undefined,
-      aiAnalysisSummary: analysisResult?.itemData?.summary || `${itemOwner} 於 ${locFullPath} 存放 ${cleanName}${itemPurchaseSource ? `（購自 ${itemPurchaseSource}）` : ''}`,
+      rawInputTranscript: transcript.trim() || undefined,
+      aiAnalysisSummary: analysisResult?.itemData?.summary,
     };
 
     onSaveItem(finalItem);
-    confetti({ particleCount: 70, spread: 70, origin: { y: 0.6 } });
+    confetti({ particleCount: 60, spread: 70, origin: { y: 0.6 } });
     onClose();
   };
 
-  const ownerConfig = FAMILY_MEMBERS_CONFIG[itemOwner] || FAMILY_MEMBERS_CONFIG[activeMember];
-  const members: FamilyMember[] = ['瑋', '珍', '朋', '淨', '炘', '豐', '柔'];
+  const ownerConfig = FAMILY_MEMBERS_CONFIG[itemOwner] || FAMILY_MEMBERS_CONFIG['瑋'];
+  const allMembers: FamilyMember[] = ['瑋', '珍', '朋', '淨', '炘', '豐', '柔'];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/50 backdrop-blur-xs animate-fadeIn">
-      <div className="bg-[#f2f2f7] w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh] border border-gray-200">
-        {/* iOS Modal Header */}
-        <div className="px-5 py-3.5 bg-white border-b border-gray-200 flex items-center justify-between">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/50 backdrop-blur-xs animate-fadeIn overflow-y-auto">
+      <div className="bg-[#f2f2f7] w-full max-w-xl rounded-3xl shadow-2xl overflow-hidden border border-gray-300 flex flex-col max-h-[92vh] my-auto">
+        {/* iOS Header */}
+        <div className="px-5 py-3.5 bg-white/90 backdrop-blur-md border-b border-gray-200 flex items-center justify-between sticky top-0 z-10">
           <div className="flex items-center space-x-2">
-            <div className="w-8 h-8 rounded-xl bg-blue-600 text-white flex items-center justify-center font-bold text-sm shadow-xs">
+            <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-600 text-white flex items-center justify-center font-bold text-sm shadow-xs">
               <Sparkles className="w-4 h-4" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-gray-900 tracking-tight">智能家庭登錄中心</h2>
-              <p className="text-[11px] text-gray-500">
-                操作者：<span className="font-semibold text-blue-600">{activeMember}（{FAMILY_MEMBERS_CONFIG[activeMember]?.relation}）</span>
-              </p>
+              <h3 className="text-base font-bold text-gray-900 tracking-tight">AI 智能登錄速填</h3>
+              <p className="text-[11px] text-gray-500">支援語音口述、多照辨識、多物品同時解析</p>
             </div>
           </div>
           <button
@@ -490,16 +455,16 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
           </button>
         </div>
 
-        {/* Scrollable Content */}
+        {/* Scrollable Content Area */}
         <div className="p-4 overflow-y-auto space-y-4 flex-1">
-          {/* Target Type Selector: 物品庫存 (Item) vs 待辦事項 (Todo) */}
-          <div className="bg-white p-2 rounded-2xl border border-gray-200 shadow-2xs">
-            <div className="grid grid-cols-2 gap-1.5 p-1 bg-[#e5e5ea] rounded-xl text-xs font-bold">
+          {/* Top Segmented Controls: Record Type (Item / Todo) */}
+          <div className="bg-white p-1 rounded-xl border border-gray-200 shadow-2xs">
+            <div className="grid grid-cols-2 gap-1 text-xs font-bold">
               <button
                 type="button"
                 onClick={() => setRecordType('item')}
                 className={`py-2 rounded-lg flex items-center justify-center space-x-1.5 transition-all ${
-                  recordType === 'item' ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-600 hover:text-gray-900'
+                  recordType === 'item' ? 'bg-blue-600 text-white shadow-xs' : 'text-gray-600 hover:text-gray-900'
                 }`}
               >
                 <Package className="w-4 h-4" />
@@ -509,7 +474,7 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
                 type="button"
                 onClick={() => setRecordType('todo')}
                 className={`py-2 rounded-lg flex items-center justify-center space-x-1.5 transition-all ${
-                  recordType === 'todo' ? 'bg-indigo-600 text-white shadow-sm' : 'text-gray-600 hover:text-gray-900'
+                  recordType === 'todo' ? 'bg-indigo-600 text-white shadow-xs' : 'text-gray-600 hover:text-gray-900'
                 }`}
               >
                 <CheckSquare className="w-4 h-4" />
@@ -518,200 +483,244 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
             </div>
           </div>
 
-          {/* AI Smart Input Box (Speech / Text / Dual Photos) */}
-          <div className="bg-white p-3.5 rounded-2xl border border-gray-200 shadow-2xs space-y-3">
+          {/* AI Smart Input Box */}
+          <div className="bg-white p-4 rounded-2xl border border-gray-200 shadow-2xs space-y-3">
+            {/* Input Mode Selector */}
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-gray-800 flex items-center space-x-1">
                 <Sparkles className="w-3.5 h-3.5 text-blue-600" />
-                <span>AI 語音/文字/雙照智能速填</span>
+                <span>輸入方式</span>
               </span>
-              <div className="flex items-center space-x-1 bg-gray-100 p-0.5 rounded-lg text-[11px] font-semibold text-gray-600">
-                <button
-                  type="button"
-                  onClick={() => setSmartMode('text')}
-                  className={`px-2 py-0.5 rounded-md ${smartMode === 'text' ? 'bg-white text-blue-600 shadow-2xs' : ''}`}
-                >
-                  文字
-                </button>
+              <div className="flex items-center space-x-1 bg-gray-100 p-0.5 rounded-lg text-xs font-semibold text-gray-600">
                 <button
                   type="button"
                   onClick={() => setSmartMode('voice')}
-                  className={`px-2 py-0.5 rounded-md ${smartMode === 'voice' ? 'bg-white text-blue-600 shadow-2xs' : ''}`}
+                  className={`px-2.5 py-1 rounded-md flex items-center space-x-1 ${smartMode === 'voice' ? 'bg-white text-blue-600 shadow-2xs font-bold' : ''}`}
                 >
-                  語音
+                  <Mic className="w-3.5 h-3.5" />
+                  <span>語音</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => setSmartMode('photo')}
-                  className={`px-2 py-0.5 rounded-md ${smartMode === 'photo' ? 'bg-white text-blue-600 shadow-2xs' : ''}`}
+                  className={`px-2.5 py-1 rounded-md flex items-center space-x-1 ${smartMode === 'photo' ? 'bg-white text-blue-600 shadow-2xs font-bold' : ''}`}
                 >
-                  拍照
+                  <Camera className="w-3.5 h-3.5" />
+                  <span>拍照</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSmartMode('text')}
+                  className={`px-2.5 py-1 rounded-md flex items-center space-x-1 ${smartMode === 'text' ? 'bg-white text-blue-600 shadow-2xs font-bold' : ''}`}
+                >
+                  <FileText className="w-3.5 h-3.5" />
+                  <span>文字</span>
                 </button>
               </div>
             </div>
 
-            {/* Photo Mode */}
-            {smartMode === 'photo' && (
-              <div className="grid grid-cols-2 gap-2.5">
-                <div className="space-y-1">
-                  <label className="text-[11px] font-bold text-gray-600">1. 物品近照 (清楚特寫)</label>
-                  <div className="relative aspect-4/3 rounded-xl border-2 border-dashed border-gray-300 hover:border-blue-500 bg-gray-50 flex flex-col items-center justify-center overflow-hidden cursor-pointer">
-                    {closeUpPhoto ? (
-                      <>
-                        <img src={closeUpPhoto} alt="近照" className="w-full h-full object-cover" />
-                        <button
-                          onClick={() => setCloseUpPhoto(null)}
-                          className="absolute top-1 right-1 p-1 bg-black/60 text-white rounded-full text-xs"
-                        >
-                          <X className="w-3 h-3" />
-                        </button>
-                      </>
+            {/* Error banner if voice blocked */}
+            {voiceError && (
+              <div className="p-2.5 bg-rose-50 border border-rose-200 text-rose-800 rounded-xl text-xs font-medium flex items-center space-x-1.5 animate-fadeIn">
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                <span>{voiceError}</span>
+              </div>
+            )}
+
+            {/* 1. Voice Mode: Large interactive recording center */}
+            {smartMode === 'voice' && (
+              <div className="p-5 bg-gradient-to-b from-blue-50/60 to-indigo-50/40 rounded-2xl border border-blue-100 text-center space-y-4">
+                <div className="flex flex-col items-center justify-center space-y-2">
+                  <button
+                    type="button"
+                    onClick={handleToggleVoice}
+                    className={`relative w-20 h-20 rounded-full flex items-center justify-center transition-all duration-300 ${
+                      isRecording
+                        ? 'bg-rose-500 text-white shadow-xl scale-110 ring-8 ring-rose-400/40 animate-pulse'
+                        : 'bg-gradient-to-tr from-blue-600 to-indigo-600 text-white shadow-lg hover:scale-105 active:scale-95'
+                    }`}
+                  >
+                    {isRecording ? (
+                      <MicOff className="w-8 h-8 animate-bounce" />
                     ) : (
-                      <label className="w-full h-full flex flex-col items-center justify-center cursor-pointer p-2 text-center">
-                        <Upload className="w-5 h-5 text-gray-400 mb-1" />
-                        <span className="text-[11px] font-semibold text-gray-600">拍攝/上傳近照</span>
-                        <input
-                          type="file"
-                          accept="image/*"
-                          className="hidden"
-                          onChange={(e) => handlePhotoUpload(e, 'close')}
-                        />
-                      </label>
+                      <Mic className="w-8 h-8" />
                     )}
+                  </button>
+
+                  <div className="space-y-0.5">
+                    <p className="text-xs font-bold text-gray-800">
+                      {isRecording ? '🎙️ 正在聆聽口述中... (說完再次點擊停止)' : '點擊麥克風開始說話'}
+                    </p>
+                    <p className="text-[11px] text-gray-500">
+                      支援多物品口述，例如：「老媽買了2罐鮮奶放冰箱，還有3盒普拿疼放客廳」
+                    </p>
                   </div>
                 </div>
 
-                <div className="space-y-1">
-                  <label className="text-[11px] font-bold text-gray-600">2. 環境遠照 (存放位置)</label>
-                  <div className="relative aspect-4/3 rounded-xl border-2 border-dashed border-gray-300 hover:border-blue-500 bg-gray-50 flex flex-col items-center justify-center overflow-hidden cursor-pointer">
-                    {widePhoto ? (
-                      <>
-                        <img src={widePhoto} alt="遠照" className="w-full h-full object-cover" />
-                        <button
-                          onClick={() => setWidePhoto(null)}
-                          className="absolute top-1 right-1 p-1 bg-black/60 text-white rounded-full text-xs"
-                        >
-                          <X className="w-3 h-3" />
-                        </button>
-                      </>
-                    ) : (
-                      <label className="w-full h-full flex flex-col items-center justify-center cursor-pointer p-2 text-center">
-                        <Upload className="w-5 h-5 text-gray-400 mb-1" />
-                        <span className="text-[11px] font-semibold text-gray-600">拍攝/上傳遠照</span>
-                        <input
-                          type="file"
-                          accept="image/*"
-                          className="hidden"
-                          onChange={(e) => handlePhotoUpload(e, 'wide')}
-                        />
-                      </label>
-                    )}
-                  </div>
+                {/* Live Transcript Preview */}
+                <div className="relative">
+                  <textarea
+                    rows={2}
+                    value={transcript}
+                    onChange={(e) => setTranscript(e.target.value)}
+                    placeholder="口述語音內容將即時顯示於此，亦可在此手動微調..."
+                    className="w-full p-2.5 bg-white border border-blue-200 rounded-xl text-xs text-gray-900 placeholder:text-gray-400 focus:outline-hidden focus:ring-2 focus:ring-blue-500"
+                  />
                 </div>
               </div>
             )}
 
-            {/* Voice & Text Box */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <textarea
-                  id="input-register-transcript"
-                  rows={2}
-                  value={transcript}
-                  onChange={(e) => {
-                    setTranscript(e.target.value);
-                    if (!itemName) setItemName(e.target.value.slice(0, 15));
-                    const detected = normalizeMemberAlias(e.target.value, itemOwner);
-                    if (detected !== itemOwner) {
-                      setItemOwner(detected);
-                    }
-                  }}
-                  placeholder="例如：老爸在好市多買的鮮奶放在1樓廚房冰箱冷藏中層；或是：美珍買了普拿疼放1樓客廳白色4層櫃..."
-                  className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
-                />
-              </div>
+            {/* 2. Photo Mode: Dual photo uploads with attached voice description */}
+            {smartMode === 'photo' && (
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-2.5">
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-bold text-gray-600">1. 物品照片 (清楚特寫/多物品)</label>
+                    <div className="relative aspect-4/3 rounded-xl border-2 border-dashed border-gray-300 hover:border-blue-500 bg-gray-50 flex flex-col items-center justify-center overflow-hidden cursor-pointer">
+                      {closeUpPhoto ? (
+                        <>
+                          <img src={closeUpPhoto} alt="近照" className="w-full h-full object-cover" />
+                          <button
+                            onClick={() => setCloseUpPhoto(null)}
+                            className="absolute top-1 right-1 p-1 bg-black/60 text-white rounded-full text-xs"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </>
+                      ) : (
+                        <label className="w-full h-full flex flex-col items-center justify-center cursor-pointer p-2 text-center">
+                          <Upload className="w-5 h-5 text-gray-400 mb-1" />
+                          <span className="text-[11px] font-semibold text-gray-600">拍照 / 上傳物品圖</span>
+                          <span className="text-[9px] text-gray-400 mt-0.5">AI 可數出數量</span>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={(e) => handlePhotoUpload(e, 'close')}
+                          />
+                        </label>
+                      )}
+                    </div>
+                  </div>
 
-              <div className="flex items-center justify-between gap-2">
-                <button
-                  type="button"
-                  onClick={handleToggleVoice}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center space-x-1.5 transition-all ${
-                    isRecording
-                      ? 'bg-red-500 text-white animate-pulse shadow-xs ring-2 ring-red-400'
-                      : 'bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200'
-                  }`}
-                >
-                  {isRecording ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
-                  <span>{isRecording ? '正在聆聽...' : '語音輸入'}</span>
-                </button>
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-bold text-gray-600">2. 環境遠照 (存放位置)</label>
+                    <div className="relative aspect-4/3 rounded-xl border-2 border-dashed border-gray-300 hover:border-blue-500 bg-gray-50 flex flex-col items-center justify-center overflow-hidden cursor-pointer">
+                      {widePhoto ? (
+                        <>
+                          <img src={widePhoto} alt="遠照" className="w-full h-full object-cover" />
+                          <button
+                            onClick={() => setWidePhoto(null)}
+                            className="absolute top-1 right-1 p-1 bg-black/60 text-white rounded-full text-xs"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </>
+                      ) : (
+                        <label className="w-full h-full flex flex-col items-center justify-center cursor-pointer p-2 text-center">
+                          <Upload className="w-5 h-5 text-gray-400 mb-1" />
+                          <span className="text-[11px] font-semibold text-gray-600">拍照 / 上傳位置圖</span>
+                          <span className="text-[9px] text-gray-400 mt-0.5">櫃位環境遠景</span>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={(e) => handlePhotoUpload(e, 'wide')}
+                          />
+                        </label>
+                      )}
+                    </div>
+                  </div>
+                </div>
 
-                <button
-                  id="btn-trigger-analyze"
-                  type="button"
-                  disabled={isAnalyzing || (!transcript.trim() && !closeUpPhoto && !widePhoto)}
-                  onClick={handleAnalyzeInput}
-                  className="flex-1 py-1.5 px-3 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold text-xs flex items-center justify-center space-x-1.5 shadow-xs hover:shadow-md active:scale-98 transition-all disabled:opacity-50"
-                >
-                  {isAnalyzing ? (
-                    <>
-                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                      <span>AI 解析中...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles className="w-3.5 h-3.5" />
-                      <span>開始 AI 分析自動填表</span>
-                    </>
-                  )}
-                </button>
-              </div>
-
-              {/* Quick Speech Chips with Aliases */}
-              <div className="flex items-center space-x-1.5 overflow-x-auto no-scrollbar pt-0.5">
-                <span className="text-[10px] text-gray-400 shrink-0">稱謂範例:</span>
-                {[
-                  '老爸在好市多買的鮮奶放1樓冰箱冷藏中層',
-                  '老媽在全聯買的普拿疼放1樓客廳白色4層櫃第2層',
-                  '哥哥在蝦皮買的五金工具放車庫鐵架',
-                  '姊姊在Momo買的吹風機放主臥大衣櫃',
-                  '語炘買的象印電子鍋放廚房電器架第2層',
-                  '家豐買的日用品放儲藏室',
-                  '彩柔買的面膜放2樓衛浴'
-                ].map((chip, idx) => (
+                {/* Photo Description with Voice */}
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={transcript}
+                    onChange={(e) => setTranscript(e.target.value)}
+                    placeholder="搭配文字或語音說明照片（例如：在1樓廚房雙門冰箱拍的鮮奶與布丁）..."
+                    className="w-full py-2 pl-3 pr-10 bg-gray-50 border border-gray-200 rounded-xl text-xs text-gray-900 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-blue-500"
+                  />
                   <button
-                    key={idx}
                     type="button"
-                    onClick={() => {
-                      setTranscript(chip);
-                      setItemName(chip.slice(0, 15));
-                      const resolved = normalizeMemberAlias(chip, itemOwner);
-                      setItemOwner(resolved);
-                    }}
-                    className="px-2 py-0.5 rounded-lg bg-gray-100 hover:bg-blue-50 hover:text-blue-700 text-[10px] text-gray-600 shrink-0 transition-colors"
+                    onClick={handleToggleVoice}
+                    className={`absolute right-1.5 top-1/2 -translate-y-1/2 p-1.5 rounded-lg transition-all ${
+                      isRecording
+                        ? 'bg-rose-500 text-white animate-pulse ring-2 ring-rose-400'
+                        : 'bg-blue-100 text-blue-700 hover:bg-blue-200'
+                    }`}
                   >
-                    {chip}
+                    {isRecording ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
                   </button>
-                ))}
+                </div>
               </div>
-            </div>
+            )}
+
+            {/* 3. Text Mode */}
+            {smartMode === 'text' && (
+              <div className="space-y-2">
+                <div className="relative">
+                  <textarea
+                    id="input-register-transcript"
+                    rows={2}
+                    value={transcript}
+                    onChange={(e) => setTranscript(e.target.value)}
+                    placeholder="例如：老媽買了2罐好市多鮮奶放1樓冰箱，還有3盒普拿疼放客廳櫃子，以及5包衛生紙放2樓儲藏室..."
+                    className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs text-gray-900 placeholder:text-gray-400 focus:outline-hidden focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleToggleVoice}
+                    className={`absolute right-2 top-2 p-1.5 rounded-lg transition-all ${
+                      isRecording
+                        ? 'bg-rose-500 text-white animate-pulse ring-2 ring-rose-400'
+                        : 'bg-gray-200 hover:bg-blue-100 text-gray-700 hover:text-blue-700'
+                    }`}
+                    title="使用語音快速輸入"
+                  >
+                    {isRecording ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Trigger AI Button */}
+            <button
+              id="btn-trigger-analyze"
+              type="button"
+              disabled={isAnalyzing || (!transcript.trim() && !closeUpPhoto && !widePhoto)}
+              onClick={handleAnalyzeInput}
+              className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-700 text-white font-bold text-xs flex items-center justify-center space-x-2 shadow-md hover:shadow-lg active:scale-98 transition-all disabled:opacity-50"
+            >
+              {isAnalyzing ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  <span>AI 正在分析物品、數量與存放位置...</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-4 h-4 text-amber-300" />
+                  <span>開始 AI 智能分析與數量辨識</span>
+                </>
+              )}
+            </button>
           </div>
 
-          {/* Missing Info Prompt Dialog with Voice Input */}
+          {/* Missing Info Dialog */}
           {showMissingDialog && analysisResult?.missingFields && (
-            <div className="bg-amber-50 p-3.5 rounded-2xl border-2 border-amber-300 space-y-2.5 shadow-xs">
+            <div className="bg-amber-50 p-3.5 rounded-2xl border-2 border-amber-300 space-y-2.5 shadow-xs animate-fadeIn">
               <div className="flex items-start space-x-2 text-amber-900">
-                <HelpCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                 <div>
                   <div className="flex items-center space-x-1.5">
                     <h4 className="text-xs font-bold">請補充存放位置或相關資訊</h4>
-                    <span className="bg-amber-200 text-amber-900 text-[10px] px-1.5 py-0.2 rounded-md font-semibold">可語音補充</span>
                   </div>
                   <p className="text-xs text-amber-800 mt-0.5">
                     {analysisResult.missingFields[0].question}
                   </p>
                 </div>
               </div>
-
               <div className="flex items-center space-x-2">
                 <div className="relative flex-1">
                   <input
@@ -719,7 +728,7 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
                     value={missingFieldAnswer}
                     onChange={(e) => setMissingFieldAnswer(e.target.value)}
                     placeholder="例如：1樓客廳白色塑膠4層櫃第2層..."
-                    className="w-full p-2 bg-white border border-amber-300 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-amber-500 pr-9"
+                    className="w-full p-2 bg-white border border-amber-300 rounded-xl text-xs focus:outline-hidden focus:ring-2 focus:ring-amber-500 pr-9"
                   />
                   <button
                     type="button"
@@ -727,14 +736,13 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
                     title="使用語音辨識補充訊息"
                     className={`absolute right-1.5 top-1/2 -translate-y-1/2 p-1.5 rounded-lg transition-all ${
                       isMissingRecording
-                        ? 'bg-red-500 text-white animate-pulse ring-2 ring-red-400'
+                        ? 'bg-rose-500 text-white animate-pulse ring-2 ring-rose-400'
                         : 'bg-amber-100 hover:bg-amber-200 text-amber-800'
                     }`}
                   >
                     {isMissingRecording ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
                   </button>
                 </div>
-
                 <button
                   type="button"
                   onClick={handleMissingFieldSubmit}
@@ -743,83 +751,199 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
                   確認
                 </button>
               </div>
-
-              {isMissingRecording && (
-                <p className="text-[10px] text-red-600 font-bold flex items-center space-x-1 animate-pulse">
-                  <span>🎙️ 正在聆聽補充語音，請直接說出存放地點或說明...</span>
-                </p>
-              )}
             </div>
           )}
 
           {/* Conflict Dialog */}
           {showConflictDialog && analysisResult?.existingItemMatch && (
-            <div className="bg-blue-50 p-3.5 rounded-2xl border-2 border-blue-300 space-y-2.5">
+            <div className="bg-blue-50 p-3.5 rounded-2xl border-2 border-blue-300 space-y-2.5 animate-fadeIn">
               <div className="flex items-start space-x-2 text-blue-900">
                 <AlertCircle className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
                 <div>
                   <h4 className="text-xs font-bold">在庫存中發現已有同名物品！</h4>
-                  <p className="text-xs text-blue-800 mt-0.5">
-                    物品「{analysisResult.existingItemMatch.name}」已存在於高家。請選擇：
-                  </p>
                 </div>
-              </div>
-
-              <div className="grid grid-cols-3 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setConflictChoice('new_purchase')}
-                  className={`p-2 rounded-xl border text-center transition-all text-xs font-bold flex flex-col items-center justify-center space-y-1 ${
-                    conflictChoice === 'new_purchase'
-                      ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
-                      : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
-                  }`}
-                >
-                  <PlusCircle className="w-4 h-4" />
-                  <span>新添購入庫</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setConflictChoice('move_item')}
-                  className={`p-2 rounded-xl border text-center transition-all text-xs font-bold flex flex-col items-center justify-center space-y-1 ${
-                    conflictChoice === 'move_item'
-                      ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
-                      : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
-                  }`}
-                >
-                  <MoveRight className="w-4 h-4" />
-                  <span>移動原位置</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setConflictChoice('consume')}
-                  className={`p-2 rounded-xl border text-center transition-all text-xs font-bold flex flex-col items-center justify-center space-y-1 ${
-                    conflictChoice === 'consume'
-                      ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
-                      : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
-                  }`}
-                >
-                  <MinusCircle className="w-4 h-4" />
-                  <span>消耗/拿取</span>
-                </button>
               </div>
             </div>
           )}
 
-          {/* Form Section: Item Form */}
-          {recordType === 'item' ? (
+          {/* BATCH ITEMS MULTI-REVIEW PANEL */}
+          {recordType === 'item' && batchItems.length > 1 ? (
+            <div className="bg-white p-4 rounded-2xl border-2 border-indigo-400 shadow-md space-y-3.5 animate-fadeIn">
+              <div className="flex items-center justify-between pb-2 border-b border-gray-100">
+                <div className="flex items-center space-x-1.5">
+                  <span className="p-1 rounded-md bg-indigo-100 text-indigo-700">
+                    <ListPlus className="w-4 h-4" />
+                  </span>
+                  <span className="text-xs font-bold text-indigo-950">
+                    AI 批量辨識出 {batchItems.length} 項物品與數量
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setBatchItems([])}
+                  className="text-[11px] text-blue-600 hover:underline"
+                >
+                  切換單項編輯
+                </button>
+              </div>
+
+              {/* Items Cards List */}
+              <div className="space-y-2.5 max-h-[380px] overflow-y-auto pr-1">
+                {batchItems.map((itemDraft, idx) => (
+                  <div
+                    key={idx}
+                    className="p-3 bg-gray-50 hover:bg-indigo-50/40 rounded-xl border border-gray-200 space-y-2 transition-all relative"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const updated = batchItems.filter((_, i) => i !== idx);
+                        setBatchItems(updated);
+                        if (updated.length === 1) {
+                          setItemName(updated[0].name);
+                          setItemQuantity(updated[0].totalQuantity);
+                          setItemUnit(updated[0].unit);
+                          setItemCategory(updated[0].category);
+                          setItemOwner(updated[0].owner);
+                        }
+                      }}
+                      className="absolute top-2 right-2 p-1 text-gray-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition-colors"
+                      title="刪除此項"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+
+                    <div className="flex items-center space-x-2 pr-6">
+                      <span className="w-5 h-5 rounded-full bg-indigo-600 text-white text-[10px] font-bold flex items-center justify-center shrink-0">
+                        {idx + 1}
+                      </span>
+                      <input
+                        type="text"
+                        value={itemDraft.name}
+                        onChange={(e) => {
+                          const updated = [...batchItems];
+                          updated[idx].name = e.target.value;
+                          setBatchItems(updated);
+                        }}
+                        className="flex-1 px-2.5 py-1 bg-white border border-gray-300 rounded-lg text-xs font-bold text-gray-900"
+                        placeholder="物品名稱"
+                      />
+                      <div className="flex items-center space-x-1 shrink-0">
+                        <input
+                          type="number"
+                          min={1}
+                          value={itemDraft.totalQuantity}
+                          onChange={(e) => {
+                            const updated = [...batchItems];
+                            const qty = Math.max(1, Number(e.target.value));
+                            updated[idx].totalQuantity = qty;
+                            updated[idx].location.quantity = qty;
+                            setBatchItems(updated);
+                          }}
+                          className="w-12 px-1.5 py-1 bg-white border border-gray-300 rounded-lg text-xs font-bold text-center"
+                        />
+                        <input
+                          type="text"
+                          value={itemDraft.unit}
+                          onChange={(e) => {
+                            const updated = [...batchItems];
+                            updated[idx].unit = e.target.value;
+                            updated[idx].location.unit = e.target.value;
+                            setBatchItems(updated);
+                          }}
+                          className="w-10 px-1 py-1 bg-white border border-gray-300 rounded-lg text-xs text-center"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 text-[11px]">
+                      <div className="flex items-center space-x-1 bg-white p-1.5 rounded-lg border border-gray-200">
+                        <MapPin className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                        <span className="truncate text-gray-700 font-medium">
+                          {itemDraft.location.floor} {itemDraft.location.room} {itemDraft.location.storageUnit}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between bg-white p-1 rounded-lg border border-gray-200">
+                        <span className="text-gray-500 pl-1">歸屬:</span>
+                        <div className="flex items-center space-x-0.5">
+                          {allMembers.map((m) => (
+                            <button
+                              key={m}
+                              type="button"
+                              onClick={() => {
+                                const updated = [...batchItems];
+                                updated[idx].owner = m;
+                                setBatchItems(updated);
+                              }}
+                              className={`w-5 h-5 rounded-md text-[10px] font-bold ${
+                                itemDraft.owner === m
+                                  ? 'bg-blue-600 text-white'
+                                  : 'text-gray-600 hover:bg-gray-100'
+                              }`}
+                            >
+                              {m}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setBatchItems([
+                    ...batchItems,
+                    {
+                      name: `新物品 ${batchItems.length + 1}`,
+                      category: 'daily',
+                      owner: activeMember,
+                      location: {
+                        floor: '1樓',
+                        room: '客廳',
+                        storageUnit: '白色塑膠4層櫃',
+                        subLocation: '第1層',
+                        quantity: 1,
+                        unit: '件',
+                      },
+                      totalQuantity: 1,
+                      unit: '件',
+                      tags: ['1樓', '1樓客廳', activeMember],
+                      summary: '手動新增之物品',
+                    }
+                  ]);
+                }}
+                className="w-full py-1.5 border border-dashed border-indigo-300 text-indigo-700 hover:bg-indigo-50 rounded-xl text-xs font-bold flex items-center justify-center space-x-1"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>新增一項物品至批量清單</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleSaveAllBatchItems}
+                className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl font-bold text-sm shadow-lg flex items-center justify-center space-x-2 active:scale-98 transition-all"
+              >
+                <Check className="w-5 h-5" />
+                <span>一鍵批量登錄全部 ({batchItems.length} 件物品)</span>
+              </button>
+            </div>
+          ) : recordType === 'item' ? (
+            /* Single Item Form */
             <div className={`bg-white p-4 rounded-2xl border-2 ${ownerConfig.cardBorder} shadow-sm space-y-3.5`}>
               <div className="flex items-center justify-between pb-2 border-b border-gray-100">
                 <span className="text-xs font-bold text-gray-700 flex items-center space-x-1">
                   <Package className="w-4 h-4 text-blue-600" />
-                  <span>物品詳細資訊 (即時編輯存檔)</span>
+                  <span>物品詳細資訊</span>
                 </span>
                 <span className="text-[11px] text-gray-400">
-                  登錄者: {activeMember} ({FAMILY_MEMBERS_CONFIG[activeMember]?.relation})
+                  操作人: {activeMember} ({FAMILY_MEMBERS_CONFIG[activeMember]?.relation})
                 </span>
               </div>
 
-              {/* Item Name & Quantity */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                 <div className="sm:col-span-2 space-y-1">
                   <label className="text-[11px] font-bold text-gray-700 block">物品名稱 *</label>
@@ -830,7 +954,7 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
                     value={itemName}
                     onChange={(e) => setItemName(e.target.value)}
                     placeholder="例如：鮮乳、普拿疼、象印電子鍋"
-                    className="w-full p-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold text-gray-900 focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                    className="w-full p-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold text-gray-900 focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
                   />
                 </div>
 
@@ -842,329 +966,125 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
                       min={1}
                       value={itemQuantity}
                       onChange={(e) => setItemQuantity(Math.max(1, Number(e.target.value)))}
-                      className="w-16 p-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold text-center focus:bg-white focus:outline-none"
+                      className="w-16 p-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold text-center focus:bg-white focus:outline-hidden"
                     />
                     <input
                       type="text"
                       value={itemUnit}
                       onChange={(e) => setItemUnit(e.target.value)}
-                      placeholder="件/瓶/包"
-                      className="w-16 p-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold text-center focus:bg-white focus:outline-none"
+                      placeholder="罐/盒/包"
+                      className="w-16 p-2 bg-gray-50 border border-gray-200 rounded-xl text-xs text-center focus:bg-white focus:outline-hidden"
                     />
                   </div>
                 </div>
               </div>
 
-              {/* Owner (with explicit alias display) & Category */}
-              <div className="grid grid-cols-2 gap-2.5">
-                <div className="space-y-1">
-                  <label className="text-[11px] font-bold text-gray-700 block">歸屬人 (自動對應稱謂)</label>
-                  <select
-                    id="select-item-owner"
-                    value={itemOwner}
-                    onChange={(e) => setItemOwner(e.target.value as FamilyMember)}
-                    className="w-full p-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold text-gray-900 focus:bg-white focus:outline-none"
-                  >
-                    {members.map((m) => (
-                      <option key={m} value={m}>
-                        {m}（{FAMILY_MEMBERS_CONFIG[m]?.relation}）
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-[11px] font-bold text-gray-700 block">物品分類</label>
-                  <select
-                    id="select-item-category"
-                    value={itemCategory}
-                    onChange={(e) => setItemCategory(e.target.value as ItemCategory)}
-                    className="w-full p-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold text-gray-900 focus:bg-white focus:outline-none"
-                  >
-                    {(Object.keys(CATEGORY_LABELS) as ItemCategory[])
-                      .filter((c) => c !== 'todo')
-                      .map((catKey) => (
-                        <option key={catKey} value={catKey}>
-                          {CATEGORY_LABELS[catKey].icon} {CATEGORY_LABELS[catKey].label}
-                        </option>
-                      ))}
-                  </select>
-                </div>
-              </div>
-
-              {/* Purchase Source, Link & Proof Section (購買來源與證明) */}
-              <div className="bg-[#fcfcff] p-3 rounded-xl border border-blue-100 space-y-2.5">
-                <div className="flex items-center justify-between">
-                  <label className="text-[11px] font-bold text-blue-900 flex items-center space-x-1">
-                    <ShoppingBag className="w-3.5 h-3.5 text-blue-600" />
-                    <span>購買來源與證明 / 電商連結</span>
-                  </label>
-                  <span className="text-[10px] text-blue-500 font-medium">選填 (自動加上標籤)</span>
-                </div>
-
-                {/* Purchase Source Input & Quick Chips */}
-                <div className="space-y-1.5">
-                  <div className="flex items-center space-x-1">
-                    <input
-                      type="text"
-                      value={itemPurchaseSource}
-                      onChange={(e) => setItemPurchaseSource(e.target.value)}
-                      placeholder="購買來源（例如：好市多 Costco、全聯、蝦皮、大潭）"
-                      className="flex-1 p-2 bg-white border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-400"
-                    />
-                  </div>
-
-                  {/* Preset Chips */}
-                  <div className="flex items-center space-x-1.5 overflow-x-auto no-scrollbar py-0.5">
-                    {PURCHASE_SOURCES.map((source) => (
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-bold text-gray-700 block">物品歸屬人 *</label>
+                <div className="flex items-center space-x-1.5 overflow-x-auto no-scrollbar py-0.5">
+                  {allMembers.map((m) => {
+                    const cfg = FAMILY_MEMBERS_CONFIG[m];
+                    const isSelected = itemOwner === m;
+                    return (
                       <button
-                        key={source}
+                        key={m}
                         type="button"
-                        onClick={() => setItemPurchaseSource(source)}
-                        className={`px-2 py-0.5 rounded-md text-[10px] font-semibold shrink-0 transition-colors ${
-                          itemPurchaseSource === source
-                            ? 'bg-blue-600 text-white'
-                            : 'bg-white border border-gray-200 text-gray-600 hover:bg-blue-50 hover:text-blue-700'
+                        onClick={() => setItemOwner(m)}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center space-x-1 shrink-0 ${
+                          isSelected
+                            ? `${cfg.avatarBg} text-white shadow-xs ring-2 ${cfg.ringColor} ring-offset-1`
+                            : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                         }`}
                       >
-                        {source}
+                        <span>{m}</span>
+                        <span className="text-[10px] opacity-80">({cfg.relation})</span>
                       </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Purchase URL & Proof Upload */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-                  <div>
-                    <label className="text-[10px] font-bold text-gray-500 flex items-center space-x-1 mb-1">
-                      <LinkIcon className="w-3 h-3 text-gray-400" />
-                      <span>購買連結 / 商品網址</span>
-                    </label>
-                    <input
-                      type="url"
-                      value={itemPurchaseUrl}
-                      onChange={(e) => setItemPurchaseUrl(e.target.value)}
-                      placeholder="https://shopee.tw/... 或 商品頁"
-                      className="w-full p-1.5 bg-white border border-gray-200 rounded-lg text-xs"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-[10px] font-bold text-gray-500 flex items-center space-x-1 mb-1">
-                      <Receipt className="w-3 h-3 text-gray-400" />
-                      <span>購買證明 / 發票截圖</span>
-                    </label>
-                    <div className="flex items-center space-x-1.5">
-                      {itemPurchaseProofUrl ? (
-                        <div className="flex items-center space-x-1.5 bg-white border border-green-300 px-2 py-1 rounded-lg flex-1">
-                          <img src={itemPurchaseProofUrl} alt="證明" className="w-5 h-5 rounded object-cover" />
-                          <span className="text-[10px] text-green-700 font-bold truncate flex-1">已附加購買證明</span>
-                          <button
-                            type="button"
-                            onClick={() => setItemPurchaseProofUrl(null)}
-                            className="text-gray-400 hover:text-red-500 text-xs"
-                          >
-                            <X className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      ) : (
-                        <label className="w-full p-1.5 bg-white border border-dashed border-gray-300 hover:border-blue-400 rounded-lg flex items-center justify-center space-x-1 cursor-pointer text-gray-500 hover:text-blue-600 transition-colors">
-                          <Upload className="w-3.5 h-3.5" />
-                          <span className="text-[11px]">上傳證明/發票圖檔</span>
-                          <input
-                            type="file"
-                            accept="image/*"
-                            className="hidden"
-                            onChange={(e) => handlePhotoUpload(e, 'proof')}
-                          />
-                        </label>
-                      )}
-                    </div>
-                  </div>
+                    );
+                  })}
                 </div>
               </div>
 
-              {/* Location Hierarchy Selectors */}
-              <div className="bg-[#f9f9fb] p-3 rounded-xl border border-gray-200 space-y-2">
-                <label className="text-[11px] font-bold text-gray-700 flex items-center space-x-1">
+              <div className="space-y-1.5 p-3 bg-blue-50/50 rounded-xl border border-blue-100">
+                <label className="text-[11px] font-bold text-blue-950 flex items-center space-x-1">
                   <MapPin className="w-3.5 h-3.5 text-blue-600" />
-                  <span>高家存放地點層級</span>
+                  <span>存放空間與收納櫃位 *</span>
                 </label>
-
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-xs">
-                  {/* Floor */}
-                  <div>
-                    <span className="text-[10px] text-gray-400 block mb-0.5">樓層</span>
-                    <select
-                      value={itemFloor}
-                      onChange={(e) => setItemFloor(e.target.value)}
-                      className="w-full p-1.5 bg-white border border-gray-200 rounded-lg text-xs font-semibold"
-                    >
-                      <option value="1樓">1樓</option>
-                      <option value="2樓">2樓</option>
-                      <option value="3樓">3樓</option>
-                      <option value="4樓">4樓/頂樓</option>
-                      <option value="戶外車庫">戶外車庫</option>
-                    </select>
-                  </div>
-
-                  {/* Room */}
-                  <div>
-                    <span className="text-[10px] text-gray-400 block mb-0.5">空間/房間</span>
-                    <input
-                      type="text"
-                      value={itemRoom}
-                      onChange={(e) => setItemRoom(e.target.value)}
-                      placeholder="客廳/廚房"
-                      className="w-full p-1.5 bg-white border border-gray-200 rounded-lg text-xs font-semibold"
-                    />
-                  </div>
-
-                  {/* Storage Unit */}
-                  <div>
-                    <span className="text-[10px] text-gray-400 block mb-0.5">櫃位/家具</span>
-                    <input
-                      type="text"
-                      value={itemStorageUnit}
-                      onChange={(e) => setItemStorageUnit(e.target.value)}
-                      placeholder="白色塑膠4層櫃"
-                      className="w-full p-1.5 bg-white border border-gray-200 rounded-lg text-xs font-semibold"
-                    />
-                  </div>
-
-                  {/* SubLocation */}
-                  <div>
-                    <span className="text-[10px] text-gray-400 block mb-0.5">層級/抽屜</span>
-                    <input
-                      type="text"
-                      value={itemSubLocation}
-                      onChange={(e) => setItemSubLocation(e.target.value)}
-                      placeholder="第1層/冷藏中層"
-                      className="w-full p-1.5 bg-white border border-gray-200 rounded-lg text-xs font-semibold"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Category-specific inputs */}
-              {itemCategory === 'food' && (
-                <div className="space-y-1">
-                  <label className="text-[11px] font-bold text-gray-700 block">食品到期日 (YYYY-MM-DD)</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <select
+                    value={itemFloor}
+                    onChange={(e) => setItemFloor(e.target.value)}
+                    className="p-2 bg-white border border-blue-200 rounded-lg text-xs font-semibold text-gray-800"
+                  >
+                    <option value="1樓">1樓 (客廳/廚房/玄關/車庫)</option>
+                    <option value="2樓">2樓 (主臥室/儲藏室/衛浴)</option>
+                    <option value="3樓">3樓 (次臥室/洗衣陽台)</option>
+                    <option value="4樓">4樓 (頂樓水塔雜物區)</option>
+                  </select>
                   <input
-                    type="date"
-                    value={itemExpiryDate}
-                    onChange={(e) => setItemExpiryDate(e.target.value)}
-                    className="w-full p-2 bg-gray-50 border border-gray-200 rounded-xl text-xs"
+                    type="text"
+                    value={itemRoom}
+                    onChange={(e) => setItemRoom(e.target.value)}
+                    placeholder="空間 (如: 廚房、客廳)"
+                    className="p-2 bg-white border border-blue-200 rounded-lg text-xs text-gray-800"
                   />
                 </div>
-              )}
-
-              {itemCategory === 'appliance' && (
-                <div className="grid grid-cols-2 gap-2 text-xs">
-                  <div>
-                    <label className="text-[10px] font-bold text-gray-500 block">保固狀態 (默認過期)</label>
-                    <select
-                      value={itemIsWarrantyValid ? 'valid' : 'expired'}
-                      onChange={(e) => setItemIsWarrantyValid(e.target.value === 'valid')}
-                      className="w-full p-2 bg-gray-50 border border-gray-200 rounded-xl text-xs"
-                    >
-                      <option value="expired">已過期 (默認)</option>
-                      <option value="valid">保固中 (有效)</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-gray-500 block">說明書/Google Drive連結</label>
-                    <input
-                      type="text"
-                      value={itemManualUrl}
-                      onChange={(e) => setItemManualUrl(e.target.value)}
-                      placeholder="說明書雲端連結"
-                      className="w-full p-2 bg-gray-50 border border-gray-200 rounded-xl text-xs"
-                    />
-                  </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    type="text"
+                    value={itemStorageUnit}
+                    onChange={(e) => setItemStorageUnit(e.target.value)}
+                    placeholder="櫃位 (如: 雙門大冰箱、白色4層櫃)"
+                    className="p-2 bg-white border border-blue-200 rounded-lg text-xs text-gray-800"
+                  />
+                  <input
+                    type="text"
+                    value={itemSubLocation}
+                    onChange={(e) => setItemSubLocation(e.target.value)}
+                    placeholder="細分層 (如: 第1層、冷凍庫)"
+                    className="p-2 bg-white border border-blue-200 rounded-lg text-xs text-gray-800"
+                  />
                 </div>
-              )}
-
-              {(itemCategory === 'medical' || itemCategory === 'daily') && (
-                <div>
-                  <label className="text-[10px] font-bold text-gray-500 block">
-                    耗材預估可用時長 (低於2週將主動提醒)
-                  </label>
-                  <div className="flex items-center space-x-2 mt-1">
-                    <input
-                      type="number"
-                      step="0.5"
-                      min={0.5}
-                      value={itemEstimatedLifespanWeeks}
-                      onChange={(e) => setItemEstimatedLifespanWeeks(Number(e.target.value))}
-                      className="w-20 p-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold text-center"
-                    />
-                    <span className="text-xs text-gray-600">週用量</span>
-                  </div>
-                </div>
-              )}
+              </div>
             </div>
           ) : (
-            /* Form Section: Todo Form */
-            <div className="bg-white p-4 rounded-2xl border-2 border-indigo-400 shadow-sm space-y-3.5">
-              <div className="flex items-center justify-between pb-2 border-b border-gray-100">
-                <span className="text-xs font-bold text-indigo-900 flex items-center space-x-1">
-                  <CheckSquare className="w-4 h-4 text-indigo-600" />
-                  <span>家庭待辦事項 (3天內提醒)</span>
-                </span>
-                <span className="text-[11px] text-gray-400">
-                  登錄者: {activeMember} ({FAMILY_MEMBERS_CONFIG[activeMember]?.relation})
-                </span>
-              </div>
-
+            /* Todo Form */
+            <div className="bg-white p-4 rounded-2xl border border-gray-200 shadow-sm space-y-3.5">
               <div className="space-y-1">
-                <label className="text-[11px] font-bold text-gray-700 block">待辦標題 *</label>
+                <label className="text-[11px] font-bold text-gray-700 block">待辦任務標題 *</label>
                 <input
                   type="text"
                   required
                   value={todoTitle}
                   onChange={(e) => setTodoTitle(e.target.value)}
-                  placeholder="例如：拿蔬菜去大潭、去全聯買鮮奶"
-                  className="w-full p-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold text-gray-900 focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  placeholder="例如：修理3樓陽台水龍頭、去全聯買牛奶..."
+                  className="w-full p-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold text-gray-900"
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-2.5">
+              <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
-                  <label className="text-[11px] font-bold text-gray-700 block">執行人 (稱謂對應)</label>
+                  <label className="text-[11px] font-bold text-gray-700 block">指派家人</label>
                   <select
                     value={todoAssignedTo}
                     onChange={(e) => setTodoAssignedTo(e.target.value as FamilyMember)}
-                    className="w-full p-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold text-gray-900"
+                    className="w-full p-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold"
                   >
-                    {members.map((m) => (
+                    {allMembers.map((m) => (
                       <option key={m} value={m}>
-                        {m}（{FAMILY_MEMBERS_CONFIG[m]?.relation}）
+                        {m} ({FAMILY_MEMBERS_CONFIG[m]?.relation})
                       </option>
                     ))}
                   </select>
                 </div>
-
                 <div className="space-y-1">
-                  <label className="text-[11px] font-bold text-gray-700 block">目標提醒日期</label>
+                  <label className="text-[11px] font-bold text-gray-700 block">預計完成日</label>
                   <input
                     type="date"
                     value={todoTargetDate}
                     onChange={(e) => setTodoTargetDate(e.target.value)}
-                    className="w-full p-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-semibold"
+                    className="w-full p-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold"
                   />
                 </div>
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-[11px] font-bold text-gray-700 block">地點標籤 (選填)</label>
-                <input
-                  type="text"
-                  value={todoLocationTag}
-                  onChange={(e) => setTodoLocationTag(e.target.value)}
-                  placeholder="例如：大潭、全聯、1樓廚房"
-                  className="w-full p-2 bg-gray-50 border border-gray-200 rounded-xl text-xs"
-                />
               </div>
 
               <div className="space-y-1">
@@ -1181,27 +1101,30 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
           )}
         </div>
 
-        {/* Modal Footer */}
-        <div className="p-4 bg-white border-t border-gray-200 flex items-center justify-between">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2.5 rounded-xl border border-gray-200 text-gray-700 text-xs font-bold hover:bg-gray-50 transition-colors"
-          >
-            取消
-          </button>
+        {/* Modal Footer (When not batch items) */}
+        {batchItems.length <= 1 && (
+          <div className="p-4 bg-white border-t border-gray-200 flex items-center justify-between">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2.5 rounded-xl border border-gray-200 text-gray-700 text-xs font-bold hover:bg-gray-50 transition-colors"
+            >
+              取消
+            </button>
 
-          <button
-            id="btn-save-database"
-            type="button"
-            onClick={handleFinalSave}
-            className="px-6 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-md hover:shadow-lg active:scale-98 transition-all flex items-center space-x-1.5"
-          >
-            <Check className="w-4 h-4" />
-            <span>{recordType === 'item' ? '建立並存入高家物品清單' : '建立並存入家庭待辦事項'}</span>
-          </button>
-        </div>
+            <button
+              id="btn-save-database"
+              type="button"
+              onClick={handleFinalSave}
+              className="px-6 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-md hover:shadow-lg active:scale-98 transition-all flex items-center space-x-1.5"
+            >
+              <Check className="w-4 h-4" />
+              <span>{recordType === 'item' ? '建立並存入高家物品清單' : '建立並存入家庭待辦事項'}</span>
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
 };
+

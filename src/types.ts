@@ -223,8 +223,36 @@ export interface KaoLocationDefinition {
   }[];
 }
 
+export interface AnalyzedItemDraft {
+  name: string;
+  category: ItemCategory;
+  owner: FamilyMember;
+  purchaseSource?: string;
+  purchaseUrl?: string;
+  purchaseProofUrl?: string;
+  location: {
+    floor: string;
+    room: string;
+    storageUnit: string;
+    subLocation?: string;
+    quantity: number;
+    unit: string;
+  };
+  totalQuantity: number;
+  unit: string;
+  expiryDate?: string;
+  warrantyDate?: string;
+  isWarrantyValid?: boolean;
+  manualUrl?: string;
+  estimatedLifespanWeeks?: number;
+  tags: string[];
+  summary: string;
+}
+
 export interface GeminiAnalysisResult {
   isTodo: boolean;
+  isMultiple?: boolean;
+  itemsList?: AnalyzedItemDraft[];
   todoData?: {
     title: string;
     assignedTo: FamilyMember;
@@ -232,31 +260,7 @@ export interface GeminiAnalysisResult {
     locationTag?: string;
     note?: string;
   };
-  itemData?: {
-    name: string;
-    category: ItemCategory;
-    owner: FamilyMember;
-    purchaseSource?: string;
-    purchaseUrl?: string;
-    purchaseProofUrl?: string;
-    location: {
-      floor: string;
-      room: string;
-      storageUnit: string;
-      subLocation?: string;
-      quantity: number;
-      unit: string;
-    };
-    totalQuantity: number;
-    unit: string;
-    expiryDate?: string;
-    warrantyDate?: string;
-    isWarrantyValid?: boolean;
-    manualUrl?: string;
-    estimatedLifespanWeeks?: number;
-    tags: string[];
-    summary: string;
-  };
+  itemData?: AnalyzedItemDraft;
   conflictDetected?: boolean;
   existingItemMatch?: {
     id: string;

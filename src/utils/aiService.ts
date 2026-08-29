@@ -1,4 +1,4 @@
-import { GeminiAnalysisResult, FamilyMember, ItemCategory, LineWeeklyBriefing, InventoryItem, TodoItem, normalizeMemberAlias } from '../types';
+import { GeminiAnalysisResult, FamilyMember, ItemCategory, LineWeeklyBriefing, InventoryItem, TodoItem, normalizeMemberAlias, AnalyzedItemDraft } from '../types';
 
 const STORAGE_KEY_GEMINI = 'kao_family_gemini_api_key';
 
@@ -27,29 +27,19 @@ function addDays(days: number): string {
   return d.toISOString().split('T')[0];
 }
 
-// 1. Intelligent Local Rule-based NLP Parser (Offline / Fallback)
-export function localParseTranscript(
-  transcript: string,
+// Helper to parse a single snippet
+function parseSingleItemSnippet(
+  snippet: string,
   currentUser: FamilyMember,
-  existingInventory: Array<{ id: string; name: string; locations?: any[]; owner: string }> = []
-): GeminiAnalysisResult {
-  const text = transcript.trim();
-
-  // 1. Determine if this is a Todo vs Item
-  const isExplicitTodo =
-    text.startsWith('待辦') ||
-    text.startsWith('提醒') ||
-    text.includes('記得要') ||
-    text.includes('記得去') ||
-    text.includes('記得幫') ||
-    text.includes('去大潭') ||
-    text.includes('修理') ||
-    (text.includes('買') && !text.includes('放') && !text.includes('買了') && !text.includes('庫存') && !text.includes('在'));
-
-  // 2. Family member resolution
+  defaultFloor = '1樓',
+  defaultRoom = '客廳',
+  defaultStorageUnit = '白色塑膠4層櫃',
+  defaultSubLocation = '第1層'
+): AnalyzedItemDraft {
+  const text = snippet.trim();
   const matchedOwner = normalizeMemberAlias(text, currentUser);
 
-  // 3. Purchase source detection
+  // Purchase source
   let purchaseSource: string | null = null;
   if (/好市多|costco/i.test(text)) purchaseSource = '好市多 Costco';
   else if (/全聯/i.test(text)) purchaseSource = '全聯福利中心';
@@ -61,35 +51,12 @@ export function localParseTranscript(
   else if (/海外|代購/i.test(text)) purchaseSource = '海外代購';
   else if (/親友|送/i.test(text)) purchaseSource = '親友贈送';
 
-  if (isExplicitTodo) {
-    let targetDate = addDays(3);
-    if (text.includes('明天')) targetDate = addDays(1);
-    else if (text.includes('後天')) targetDate = addDays(2);
-    else if (text.includes('下週') || text.includes('下星期')) targetDate = addDays(7);
-
-    return {
-      isTodo: true,
-      todoData: {
-        title: text.replace(/^(待辦|提醒|記得要|記得)/, '').trim() || text,
-        assignedTo: matchedOwner,
-        targetDate,
-        locationTag: text.includes('陽台') ? '3樓陽台' : text.includes('廚房') ? '1樓廚房' : '高家',
-        note: `語音/文字快速登錄：${text}`,
-      },
-      itemData: null,
-      conflictDetected: false,
-      existingItemMatch: null,
-      missingFields: [],
-      rawTranscript: text,
-    };
-  }
-
-  // 4. Extract Category
+  // Category
   let category: ItemCategory = 'daily';
   let estimatedLifespanWeeks = 4;
   let expiryDate: string | null = null;
 
-  if (/鮮奶|鮮乳|牛奶|蛋|肉|菜|魚|優格|麵包|水果|熟食|起司|豆漿|飲料|零食|餅乾|蘋果|香蕉|雞胸肉|蔬菜/i.test(text)) {
+  if (/鮮奶|鮮乳|牛奶|蛋|肉|菜|魚|優格|麵包|水果|熟食|起司|豆漿|飲料|零食|餅乾|蘋果|香蕉|雞胸肉|蔬菜|布丁|養樂多|可樂|茶/i.test(text)) {
     category = 'food';
     estimatedLifespanWeeks = 1;
     if (text.includes('下星期五') || text.includes('下週五')) expiryDate = addDays(6);
@@ -113,11 +80,11 @@ export function localParseTranscript(
     estimatedLifespanWeeks = 8;
   }
 
-  // 5. Extract Floor & Room
-  let floor = '1樓';
-  let room = '客廳';
-  let storageUnit = '白色塑膠4層櫃';
-  let subLocation = '第1層';
+  // Location
+  let floor = defaultFloor;
+  let room = defaultRoom;
+  let storageUnit = defaultStorageUnit;
+  let subLocation = defaultSubLocation;
 
   if (text.includes('廚房') || text.includes('冰箱') || text.includes('流理台') || category === 'food') {
     floor = '1樓';
@@ -151,7 +118,7 @@ export function localParseTranscript(
     subLocation = '全區';
   }
 
-  // 6. Extract Quantity & Unit
+  // Quantity & Unit
   let quantity = 1;
   let unit = '件';
   const qtyMatch = text.match(/(\d+)\s*(罐|瓶|盒|包|袋|入|件|個|條|組|台|顆|箱|支|把)/);
@@ -167,46 +134,124 @@ export function localParseTranscript(
     }
   }
 
-  // 7. Clean Name
+  // Clean Name
   let name = text
-    .replace(/(老爸|老媽|爸爸|媽媽|哥哥|姊姊|姐姐|美珍|樹瑋|有朋|于淨|語炘|家豐|彩柔|瑋|珍|朋|淨|炘|豐|柔|買了|買的|放|在|在1樓|在2樓|在3樓|在4樓|客廳|廚房|雙門大冰箱|冰箱|白色塑膠4層櫃|保存期限到|期限到|有效期限|下星期五|明天|後天|\d+罐|\d+瓶|\d+盒|\d+包|\d+袋|\d+入|\d+件|\d+個)/g, '')
-    .replace(/[，,。！!、]/g, ' ')
+    .replace(/(老爸|老媽|爸爸|媽媽|哥哥|姊姊|姐姐|美珍|樹瑋|有朋|于淨|語炘|家豐|彩柔|瑋|珍|朋|淨|炘|豐|柔|買了|買的|放|在|在1樓|在2樓|在3樓|在4樓|客廳|廚房|雙門大冰箱|冰箱|白色塑膠4層櫃|白色塑膠5層櫃|儲藏室|保存期限到|期限到|有效期限|下星期五|明天|後天|\d+罐|\d+瓶|\d+盒|\d+包|\d+袋|\d+入|\d+件|\d+個)/g, '')
+    .replace(/[，,。！!、還有以及另外和及]/g, ' ')
     .trim();
-  
+
   if (!name || name.length < 2) {
     name = text.slice(0, 12);
   }
 
-  // 8. Conflict match
-  const match = existingInventory.find((it) => it.name.trim().toLowerCase() === name.toLowerCase());
+  return {
+    name,
+    category,
+    owner: matchedOwner,
+    purchaseSource,
+    purchaseUrl: undefined,
+    purchaseProofUrl: undefined,
+    location: {
+      floor,
+      room,
+      storageUnit,
+      subLocation,
+      quantity,
+      unit,
+    },
+    totalQuantity: quantity,
+    unit,
+    expiryDate: expiryDate || undefined,
+    warrantyDate: undefined,
+    isWarrantyValid: false,
+    manualUrl: undefined,
+    estimatedLifespanWeeks,
+    tags: [floor, `${floor}${room}`, storageUnit, matchedOwner].filter(Boolean),
+    summary: `${matchedOwner} 登錄之 ${name} (${quantity}${unit})，存放於 ${floor} ${room} ${storageUnit} ${subLocation}`,
+  };
+}
+
+// 1. Intelligent Local Rule-based NLP Parser (Offline / Fallback) with Multi-Item Batch Support
+export function localParseTranscript(
+  transcript: string,
+  currentUser: FamilyMember,
+  existingInventory: Array<{ id: string; name: string; locations?: any[]; owner: string }> = []
+): GeminiAnalysisResult {
+  const text = transcript.trim();
+
+  // 1. Determine if this is a Todo vs Item
+  const isExplicitTodo =
+    text.startsWith('待辦') ||
+    text.startsWith('提醒') ||
+    text.includes('記得要') ||
+    text.includes('記得去') ||
+    text.includes('記得幫') ||
+    text.includes('去大潭') ||
+    text.includes('修理') ||
+    (text.includes('買') && !text.includes('放') && !text.includes('買了') && !text.includes('庫存') && !text.includes('在'));
+
+  if (isExplicitTodo) {
+    let targetDate = addDays(3);
+    if (text.includes('明天')) targetDate = addDays(1);
+    else if (text.includes('後天')) targetDate = addDays(2);
+    else if (text.includes('下週') || text.includes('下星期')) targetDate = addDays(7);
+    const matchedOwner = normalizeMemberAlias(text, currentUser);
+
+    return {
+      isTodo: true,
+      isMultiple: false,
+      todoData: {
+        title: text.replace(/^(待辦|提醒|記得要|記得)/, '').trim() || text,
+        assignedTo: matchedOwner,
+        targetDate,
+        locationTag: text.includes('陽台') ? '3樓陽台' : text.includes('廚房') ? '1樓廚房' : '高家',
+        note: `語音/文字快速登錄：${text}`,
+      },
+      itemData: undefined,
+      conflictDetected: false,
+      existingItemMatch: undefined,
+      missingFields: [],
+      rawTranscript: text,
+    };
+  }
+
+  // 2. Check for Multiple Items in speech / text
+  // Split on "還有", "以及", "另外", "，", "、", "和"
+  const rawSplits = text.split(/還有|以及|另外|，|、|和/).map((s) => s.trim()).filter((s) => s.length >= 2);
+  const itemsList: AnalyzedItemDraft[] = [];
+
+  if (rawSplits.length > 1) {
+    rawSplits.forEach((chunk) => {
+      const item = parseSingleItemSnippet(chunk, currentUser);
+      if (item.name && item.name.length >= 2 && !item.name.includes('高家新物品')) {
+        itemsList.push(item);
+      }
+    });
+  }
+
+  // If multi-item parsed successfully
+  if (itemsList.length > 1) {
+    return {
+      isTodo: false,
+      isMultiple: true,
+      itemsList,
+      itemData: itemsList[0],
+      conflictDetected: false,
+      existingItemMatch: undefined,
+      missingFields: [],
+      rawTranscript: text,
+    };
+  }
+
+  // Single Item fallback
+  const singleItem = parseSingleItemSnippet(text, currentUser);
+  const match = existingInventory.find((it) => it.name.trim().toLowerCase() === singleItem.name.toLowerCase());
 
   return {
     isTodo: false,
-    itemData: {
-      name,
-      category,
-      owner: matchedOwner,
-      purchaseSource,
-      purchaseUrl: null,
-      purchaseProofUrl: null,
-      location: {
-        floor,
-        room,
-        storageUnit,
-        subLocation,
-        quantity,
-        unit,
-      },
-      totalQuantity: quantity,
-      unit,
-      expiryDate,
-      warrantyDate: null,
-      isWarrantyValid: false,
-      manualUrl: null,
-      estimatedLifespanWeeks,
-      tags: [floor, `${floor}${room}`, category, matchedOwner].filter(Boolean),
-      summary: `${matchedOwner} 登錄之物品，存放於 ${floor} ${room} ${storageUnit} ${subLocation}`,
-    },
+    isMultiple: false,
+    itemsList: [singleItem],
+    itemData: singleItem,
     conflictDetected: Boolean(match),
     existingItemMatch: match ? { id: match.id, name: match.name, currentLocations: (match.locations || []) as any, owner: match.owner as FamilyMember } : undefined,
     missingFields: !text.includes('樓') && !text.includes('房') && !text.includes('櫃') && !text.includes('箱')
@@ -214,7 +259,7 @@ export function localParseTranscript(
           {
             field: 'location',
             question: '請問這件物品存放在高家哪裡呢？（例如：1樓客廳白色塑膠4層櫃第1層）',
-            defaultValue: `${floor}${room}${storageUnit}${subLocation}`,
+            defaultValue: `${singleItem.location.floor}${singleItem.location.room}${singleItem.location.storageUnit}${singleItem.location.subLocation}`,
           },
         ]
       : [],
@@ -222,7 +267,7 @@ export function localParseTranscript(
   };
 }
 
-// 2. Client-side Direct Gemini API Call (Using API key from user or storage)
+// 2. Client-side Direct Gemini API Call (Supports Multiple Items & Visual Image Counting)
 export async function callGeminiDirectly(
   apiKey: string,
   transcript: string,
@@ -244,12 +289,33 @@ export async function callGeminiDirectly(
 - 【豐】：家豐、阿豐、豐豐、豐。
 - 【柔】：彩柔、阿柔、柔柔、柔。
 
-分析規則：
-1. 實體物品歸為 item (isTodo: false)，明確待辦事項歸為 todo (isTodo: true)。
-2. 回傳嚴格 JSON 格式：
+多物品辨識與圖片數量分析重要規則：
+1. 若使用者輸入一段話提到「多個物品」（例如買了鮮奶、普拿疼、衛生紙），或者照片中出現多個物品：
+   - 必須將每一個物品辨識出來，並放在 \`itemsList\` 陣列中！
+   - \`isMultiple\` 設為 true。
+   - 針對圖片分析：請仔細清點圖片中的每一種物品與瓶罐包裝，精確計算數量 (如: 2罐、4包、1盒)！
+2. 實體物品歸為 item (isTodo: false)，明確待辦事項歸為 todo (isTodo: true)。
+3. 回傳嚴格 JSON 格式：
 {
   "isTodo": boolean,
-  "todoData": { "title": string, "assignedTo": string, "targetDate": "YYYY-MM-DD", "locationTag": string, "note": string },
+  "isMultiple": boolean,
+  "itemsList": [
+    {
+      "name": string,
+      "category": "food" | "appliance" | "medical" | "daily" | "hardware" | "other",
+      "owner": "瑋" | "珍" | "朋" | "淨" | "炘" | "豐" | "柔",
+      "purchaseSource": string | null,
+      "location": { "floor": string, "room": string, "storageUnit": string, "subLocation": string, "quantity": number, "unit": string },
+      "totalQuantity": number,
+      "unit": string,
+      "expiryDate": "YYYY-MM-DD" | null,
+      "warrantyDate": "YYYY-MM-DD" | null,
+      "isWarrantyValid": boolean,
+      "estimatedLifespanWeeks": number | null,
+      "tags": string[],
+      "summary": string
+    }
+  ],
   "itemData": {
     "name": string,
     "category": "food" | "appliance" | "medical" | "daily" | "hardware" | "other",
@@ -265,6 +331,7 @@ export async function callGeminiDirectly(
     "tags": string[],
     "summary": string
   },
+  "todoData": { "title": string, "assignedTo": string, "targetDate": "YYYY-MM-DD", "locationTag": string, "note": string },
   "conflictDetected": boolean,
   "missingFields": [{ "field": string, "question": string, "defaultValue": string }],
   "rawTranscript": string
@@ -289,7 +356,7 @@ export async function callGeminiDirectly(
     });
   }
   parts.push({
-    text: `當前登錄者：【${currentUser}】\n使用者輸入："""${transcript}"""\n請詳細分析並輸出上述 JSON。`,
+    text: `當前登錄者：【${currentUser}】\n使用者輸入："""${transcript}"""\n${closeUpPhotoBase64 || widePhotoBase64 ? '【注意：請分析照片中的物品種類與精確數量，若有多個物品請分別列入 itemsList】' : ''}\n請詳細分析並輸出上述 JSON。`,
   });
 
   const response = await fetch(endpoint, {
@@ -311,7 +378,19 @@ export async function callGeminiDirectly(
 
   const result = await response.json();
   const textOutput = result.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
-  return JSON.parse(textOutput);
+  const parsed = JSON.parse(textOutput);
+
+  // Normalization
+  if (parsed.itemsList && Array.isArray(parsed.itemsList) && parsed.itemsList.length > 0) {
+    parsed.itemData = parsed.itemsList[0];
+    if (parsed.itemsList.length > 1) {
+      parsed.isMultiple = true;
+    }
+  } else if (parsed.itemData) {
+    parsed.itemsList = [parsed.itemData];
+  }
+
+  return parsed;
 }
 
 // 3. Universal Analyzer: Server API ➔ Client Gemini API ➔ Intelligent Local Parser
