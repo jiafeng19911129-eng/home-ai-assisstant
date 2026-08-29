@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { InventoryItem, TodoItem, LineWeeklyBriefing } from '../types';
+import { generateLocalBriefing } from '../utils/aiService';
 import { Sparkles, X, Copy, Check, Send, CheckCircle2 } from 'lucide-react';
 
 interface BriefingModalProps {
@@ -31,13 +32,19 @@ export const BriefingModal: React.FC<BriefingModalProps> = ({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ items, todos }),
         });
-        const data = await response.json();
-        setBriefing(data);
+        if (response.ok) {
+          const data = await response.json();
+          setBriefing(data);
+          return;
+        }
       } catch (e) {
         console.warn(e);
-      } finally {
-        setLoading(false);
       }
+      
+      // Fallback: Client-side local generator
+      const localData = generateLocalBriefing(items, todos);
+      setBriefing(localData);
+      setLoading(false);
     };
     loadBriefing();
   }, [items, todos]);

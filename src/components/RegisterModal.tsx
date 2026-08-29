@@ -11,6 +11,7 @@ import {
 } from '../types';
 import { KAO_LOCATION_STRUCTURE } from '../data/initialData';
 import { SpeechRecognizer } from '../utils/speechRecognition';
+import { analyzeSmartInput } from '../utils/aiService';
 import confetti from 'canvas-confetti';
 import { 
   X, 
@@ -244,24 +245,19 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
 
     setIsAnalyzing(true);
     try {
-      const response = await fetch('/api/gemini/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          transcript,
-          currentUser: activeMember,
-          closeUpPhotoBase64: closeUpPhoto,
-          widePhotoBase64: widePhoto,
-          existingInventory: existingItems.map((i) => ({
-            id: i.id,
-            name: i.name,
-            locations: i.locations,
-            owner: i.owner,
-          })),
-        }),
+      const data = await analyzeSmartInput({
+        transcript,
+        currentUser: activeMember,
+        closeUpPhoto,
+        widePhoto,
+        existingInventory: existingItems.map((i) => ({
+          id: i.id,
+          name: i.name,
+          locations: i.locations,
+          owner: i.owner,
+        })),
       });
 
-      const data: GeminiAnalysisResult = await response.json();
       setAnalysisResult(data);
 
       // Check Missing Fields

@@ -7,7 +7,8 @@ import {
   Bell, 
   Smartphone, 
   UserCheck,
-  Sparkles
+  Sparkles,
+  Key
 } from 'lucide-react';
 
 interface NavbarProps {
@@ -18,6 +19,7 @@ interface NavbarProps {
   urgentCount: number;
   onOpenNfcModal: () => void;
   onOpenBriefingModal: () => void;
+  onOpenSettingsModal: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -28,6 +30,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   urgentCount,
   onOpenNfcModal,
   onOpenBriefingModal,
+  onOpenSettingsModal,
 }) => {
   const members: FamilyMember[] = ['瑋', '珍', '朋', '淨', '炘', '豐', '柔'];
   const activeConfig = FAMILY_MEMBERS_CONFIG[activeMember];
@@ -84,6 +87,16 @@ export const Navbar: React.FC<NavbarProps> = ({
                   {urgentCount}
                 </span>
               )}
+            </button>
+
+            {/* AI / Gemini Key Settings Button */}
+            <button
+              id="navbar-settings-btn"
+              onClick={onOpenSettingsModal}
+              title="AI 雙核心與金鑰設定"
+              className="p-2 rounded-full bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 active:scale-95 transition-all shadow-xs"
+            >
+              <Key className="w-4 h-4 text-indigo-600" />
             </button>
 
             {/* Front / Back Stage Segmented Control */}

@@ -17,6 +17,7 @@ import { ConsumeModal } from './components/ConsumeModal';
 import { PhotoLightbox } from './components/PhotoLightbox';
 import { NfcModal } from './components/NfcModal';
 import { BriefingModal } from './components/BriefingModal';
+import { SettingsModal } from './components/SettingsModal';
 
 export const App: React.FC = () => {
   // 1. Core State
@@ -66,6 +67,7 @@ export const App: React.FC = () => {
   const [lightboxItem, setLightboxItem] = useState<InventoryItem | null>(null);
   const [isNfcOpen, setIsNfcOpen] = useState(false);
   const [isBriefingOpen, setIsBriefingOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   // Save to localStorage
   useEffect(() => {
@@ -168,6 +170,7 @@ export const App: React.FC = () => {
         urgentCount={urgentCount}
         onOpenNfcModal={() => setIsNfcOpen(true)}
         onOpenBriefingModal={() => setIsBriefingOpen(true)}
+        onOpenSettingsModal={() => setIsSettingsOpen(true)}
       />
 
       {/* Toast Notification Banner */}
@@ -254,6 +257,12 @@ export const App: React.FC = () => {
         onClose={() => setIsBriefingOpen(false)}
         items={items}
         todos={todos}
+      />
+
+      {/* 8. Settings Modal */}
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
       />
     </div>
   );
